@@ -9,34 +9,34 @@ A ticket processing app for a small trucking/construction business. Drivers phot
 ```mermaid
 flowchart TD
     A([Driver]) -->|passcode| B[POST /login]
-    B --> C[TicketDriverLogin Lambda\nreturns JWT]
+    B --> C[dt-login Lambda\nreturns JWT]
 
     C --> D[OpenCV preprocessing\nin browser]
     D --> E[POST /upload-ticket]
-    E --> F[TicketPresignHandler\nDB: awaiting-upload]
+    E --> F[dt-ticket-presign\nDB: awaiting-upload]
     F -->|presigned URL| G[Client PUT → S3 /raw]
 
-    G --> H[TicketDbWriter\nDB: uploaded]
+    G --> H[dt-ticket-db-writer\nDB: uploaded]
     H --> I{{EventBridge}}
-    I --> J[TicketValidator\nDB: validating]
+    I --> J[dt-ticket-validator\nDB: validating]
     J -->|pass| K[S3 /validated\nDB: validated]
     J -->|fail| L[S3 /rejected\nDB: rejected]
     K --> M{{EventBridge}}
-    M --> N[TextractLambda\nDB: extracted]
+    M --> N[dt-ticket-textract\nDB: extracted]
 
     G --> O[Client polls /get-ticket]
     O -->|status: extracted| P[Review + edit fields in UI]
     P --> Q[POST /confirm-ticket]
-    Q --> R[TicketDbConfirm\nDB: confirmed]
+    Q --> R[dt-ticket-db-confirm\nDB: confirmed]
     R --> S{{EventBridge}}
-    S --> T[TicketSheetsWriter\nDB: populated\nSheet row written]
+    S --> T[dt-sheets-writer\nDB: populated\nSheet row written]
 
     T --> U[Client polls /get-ticket]
     U -->|status: populated| V[Frontend reloads]
 
     V --> W[Admin: GET /tickets?status=populated]
     W --> X[POST /invoices/generate]
-    X --> Y[InvoiceGenerator Lambda\nDB: generating invoice]
+    X --> Y[dt-invoice-generator Lambda\nDB: generating invoice]
     Y --> Z[Google Apps Script\nPDF generated · uploaded to Drive]
     Z --> AA([DB: generated · PDF URL returned])
 ```
@@ -47,18 +47,18 @@ flowchart TD
 
 ```mermaid
 stateDiagram-v2
-    [*] --> awaiting_upload: TicketPresignHandler
-    awaiting_upload --> uploaded: S3 trigger / TicketDbWriter
-    uploaded --> validating: TicketValidator
+    [*] --> awaiting_upload: dt-ticket-presign
+    awaiting_upload --> uploaded: S3 trigger / dt-ticket-db-writer
+    uploaded --> validating: dt-ticket-validator
     validating --> validated: passes validation
     validating --> rejected: fails uniqueness check
-    validated --> extracting: TextractLambda
+    validated --> extracting: dt-ticket-textract
     extracting --> extracted: Textract success
     extracting --> failed: Textract failure
     extracted --> confirmed: client confirms
-    confirmed --> populating: TicketSheetsWriter
+    confirmed --> populating: dt-sheets-writer
     populating --> populated: Sheet write success
-    populated --> generating_invoice: InvoiceGenerator
+    populated --> generating_invoice: dt-invoice-generator
     generating_invoice --> invoiced: Apps Script success
     invoiced --> [*]
     rejected --> [*]
@@ -71,8 +71,8 @@ stateDiagram-v2
 
 - Each driver has their own passcode; admin has a separate one
 - Client submits passcode via POST to `/login` on API Gateway
-- `TicketDriverLogin` Lambda validates the passcode and returns a signed JWT (crypto library)
-- All downstream routes have a custom Lambda authorizer (`TicketJwtAuthorizer`) that validates the token
+- `dt-login` Lambda validates the passcode and returns a signed JWT (crypto library)
+- All downstream routes have a custom Lambda authorizer (`dt-jwt-authorizer`) that validates the token
 
 ---
 
@@ -99,8 +99,8 @@ Client displays the processed image for preview before uploading.
 ## Raw Upload
 
 1. Client sends POST to `/upload-ticket`
-2. `TicketJwtAuthorizer` authorizes the request
-3. `TicketPresignHandler` Lambda:
+2. `dt-jwt-authorizer` authorizes the request
+3. `dt-ticket-presign` Lambda:
    - Grabs user identity from token
    - Generates a random `ticketId`
    - Creates a record in `ticket-db` with status `awaiting-upload`
@@ -112,15 +112,15 @@ Client displays the processed image for preview before uploading.
 
 ## Cloud Validation and Extraction
 
-### S3 Trigger → TicketDbWriter
+### S3 Trigger → dt-ticket-db-writer
 - Triggered by new object in S3 `/raw`
 - Fetches ticket record from DB
 - Updates status to `uploaded` only if status === `awaiting-upload`
 - On success: publishes event to EventBridge
 
-### EventBridge → TicketValidator
+### EventBridge → dt-ticket-validator
 - Updates status to `validating` only if status === `uploaded`
-- Sets `validationStartedAt` timestamp (used by `TicketStageRecoveryLambda`)
+- Sets `validationStartedAt` timestamp (used by `dt-ticket-stage-recovery`)
 - Downloads ticket from S3 `/raw`
 - Verifies `.png` format
 - Verifies file size
@@ -134,9 +134,9 @@ Client displays the processed image for preview before uploading.
 - Updates status to `validated` or `rejected` only if status === `validating`
 - On success: publishes `TicketExtractionRequested` event to EventBridge
 
-### EventBridge → TextractLambda
+### EventBridge → dt-ticket-textract
 - Updates status to `extracting` only if status === `validated`
-- Sets `lastUpdated` timestamp (used by `TicketStageRecoveryLambda`)
+- Sets `lastUpdated` timestamp (used by `dt-ticket-stage-recovery`)
 - Loads ticket from S3 `/validated`
 - Runs Textract
 - Updates extracted data in `ticket-db`
@@ -148,8 +148,8 @@ Client displays the processed image for preview before uploading.
 
 After the S3 PUT, the client polls `/get-ticket`:
 
-- `TicketJwtAuthorizer` authorizes the token
-- `TicketDbReader` Lambda:
+- `dt-jwt-authorizer` authorizes the token
+- `dt-ticket-db-reader` Lambda:
   - Returns error if ticket doesn't exist
   - Returns error if `driverId` doesn't match requester
   - Returns current status (drives polling logic on client)
@@ -165,8 +165,8 @@ After the S3 PUT, the client polls `/get-ticket`:
 2. UI displays image with extracted fields, all editable
 3. Driver reviews and edits fields
 4. Client sends POST to `/confirm-ticket`
-5. `TicketJwtAuthorizer` authorizes the token
-6. `TicketDbConfirm` Lambda:
+5. `dt-jwt-authorizer` authorizes the token
+6. `dt-ticket-db-confirm` Lambda:
    - Updates DB with reviewed/edited data
    - DynamoDB transaction:
      - Updates status to `confirmed` only if status === `extracted`
@@ -179,12 +179,12 @@ After the S3 PUT, the client polls `/get-ticket`:
 
 ## Google Sheets Population
 
-### EventBridge → TicketSheetsWriter
+### EventBridge → dt-sheets-writer
 
-> **Note:** Google Sheets is the business's source of truth. Tickets can be processed manually directly in Sheets. A planned **Sheets-sync Lambda** will run at the start of the pipeline to sync Sheets → Dynamo so the backend is aware of manually processed tickets.
+> **Note:** Google Sheets is the business's source of truth. Tickets can be processed manually directly in Sheets. A planned **dt-sheets-sync** lambda will run at the start of the pipeline to sync Sheets → Dynamo so the backend is aware of manually processed tickets.
 
 - Updates status to `populating` only if status === `confirmed`
-- Sets `populatingStartedAt` timestamp (used by `TicketStageRecoveryLambda`)
+- Sets `populatingStartedAt` timestamp (used by `dt-ticket-stage-recovery`)
 - Builds the new row in memory using this schema:
 
   | Col | Field        |
@@ -222,12 +222,12 @@ After the S3 PUT, the client polls `/get-ticket`:
 ### Admin View
 
 - Admin sends GET to `/tickets?status=populated`
-- `TicketDbReader` Lambda fetches all tickets with status `populated`
+- `dt-ticket-db-reader` Lambda fetches all tickets with status `populated`
 - Returns `confirmedData`, `confirmedAt`, `driverId`, `validatedKey`, and `status` per ticket
 - UI shows badge if there are unprocessed tickets
 - Admin groups tickets by earliest date, clicks "Generate Invoice"
 
-### POST /invoices/generate → InvoiceGenerator Lambda
+### POST /invoices/generate → dt-invoice-generator Lambda
 
 - Fetches all tickets from `ticket-db` with status === `populated` and matching date (using `status-date-index`)
 - Single DynamoDB transaction: updates all matched tickets to `generating invoice` only if status === `populated`
@@ -246,7 +246,7 @@ After the S3 PUT, the client polls `/get-ticket`:
 - Writes the new invoice number into the Sheet for those rows and links the PDF URL
 - Returns success to Lambda with the PDF URL and invoice number
 
-### InvoiceGenerator Lambda (continued)
+### dt-invoice-generator Lambda (continued)
 
 - Receives PDF URL from Apps Script
 - Updates `ticket-db`: sets `invoiceStatus` to `generated`, sets `invoiceNumber` and `InvoicePdfKey` only if `invoiceStatus` === `generating`
