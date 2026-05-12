@@ -1,0 +1,26 @@
+# Node
+node_modules/
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+*.lcov
+.nyc_output
+
+# Environment / secrets
+.env
+.env.local
+.env.test
+.env*.local
+
+# SAM
+**/.aws-sam/
+samconfig.local.toml
+
+# macOS
+.DS_Store
+
+# Editor / temp
+tmp/
+temp/
