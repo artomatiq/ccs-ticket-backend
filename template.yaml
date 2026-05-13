@@ -18,6 +18,16 @@ Resources:
     Type: AWS::Serverless::HttpApi
     Properties:
       Name: dt-api
+      Auth:
+        Authorizers:
+          JwtAuthorizer:
+            FunctionArn: !GetAtt JwtAuthorizer.Arn
+            Identity:
+              Headers:
+                - Authorization
+            AuthorizerPayloadFormatVersion: "2.0"
+            EnableSimpleResponses: true
+        DefaultAuthorizer: JwtAuthorizer
 
   Login:
     Type: AWS::Serverless::Function
@@ -55,11 +65,46 @@ Resources:
             ApiId: !Ref Api
             Path: /login
             Method: POST
+            Auth:
+              Authorizer: NONE
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
         EntryPoints:
           - handlers/dt-login/index.mjs
+        Target: es2022
+        Sourcemap: true
+        External:
+          - '@aws-sdk/*'
+
+  JwtAuthorizer:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: dt-jwt-authorizer
+      CodeUri: src/
+      Handler: handlers/dt-jwt-authorizer/index.handler
+      Environment:
+        Variables:
+          JWT_SECRET_PARAM: /dt/jwt-secret
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameters
+              Resource:
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/jwt-secret
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - handlers/dt-jwt-authorizer/index.mjs
         Target: es2022
         Sourcemap: true
         External:
