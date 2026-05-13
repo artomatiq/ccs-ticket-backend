@@ -12,7 +12,7 @@ flowchart TD
     B --> C[dt-login Lambda\nreturns JWT]
 
     C --> D[OpenCV preprocessing\nin browser]
-    D --> E[POST /upload-ticket]
+    D --> E[POST /tickets]
     E --> F[dt-ticket-presign\nDB: awaiting-upload]
     F -->|presigned URL| G[Client PUT → S3 /raw]
 
@@ -24,18 +24,18 @@ flowchart TD
     K --> M{{EventBridge}}
     M --> N[dt-ticket-textract\nDB: extracted]
 
-    G --> O[Client polls /get-ticket]
+    G --> O["Client polls /tickets/{ticketId}"]
     O -->|status: extracted| P[Review + edit fields in UI]
-    P --> Q[POST /confirm-ticket]
+    P --> Q["POST /tickets/{ticketId}/confirm"]
     Q --> R[dt-ticket-db-confirm\nDB: confirmed]
     R --> S{{EventBridge}}
     S --> T[dt-sheets-writer\nDB: populated\nSheet row written]
 
-    T --> U[Client polls /get-ticket]
+    T --> U["Client polls /tickets/{ticketId}"]
     U -->|status: populated| V[Frontend reloads]
 
     V --> W[Admin: GET /tickets?status=populated]
-    W --> X[POST /invoices/generate]
+    W --> X[POST /invoices]
     X --> Y[dt-invoice-generator Lambda\nDB: generating invoice]
     Y --> Z[Google Apps Script\nPDF generated · uploaded to Drive]
     Z --> AA([DB: generated · PDF URL returned])
@@ -98,7 +98,7 @@ Client displays the processed image for preview before uploading.
 
 ## Raw Upload
 
-1. Client sends POST to `/upload-ticket`
+1. Client sends POST to `/tickets`
 2. `dt-jwt-authorizer` authorizes the request
 3. `dt-ticket-presign` Lambda:
    - Grabs user identity from token
@@ -106,7 +106,7 @@ Client displays the processed image for preview before uploading.
    - Creates a record in `ticket-db` with status `awaiting-upload`
    - Returns a presigned S3 PUT URL
 4. Client PUTs image directly to S3 `/raw` using the presigned URL
-5. Client begins polling `/get-ticket` (see [Client Polling](#client-polling))
+5. Client begins polling `/tickets/{ticketId}` (see [Client Polling](#client-polling))
 
 ---
 
@@ -146,7 +146,7 @@ Client displays the processed image for preview before uploading.
 
 ## Client Polling
 
-After the S3 PUT, the client polls `/get-ticket`:
+After the S3 PUT, the client polls `/tickets/{ticketId}`:
 
 - `dt-jwt-authorizer` authorizes the token
 - `dt-ticket-db-reader` Lambda:
@@ -164,7 +164,7 @@ After the S3 PUT, the client polls `/get-ticket`:
 1. Client receives extracted data + validated image URL
 2. UI displays image with extracted fields, all editable
 3. Driver reviews and edits fields
-4. Client sends POST to `/confirm-ticket`
+4. Client sends POST to `/tickets/{ticketId}/confirm`
 5. `dt-jwt-authorizer` authorizes the token
 6. `dt-ticket-db-confirm` Lambda:
    - Updates DB with reviewed/edited data
@@ -173,7 +173,7 @@ After the S3 PUT, the client polls `/get-ticket`:
      - Updates `ticket-number-db`
      - Stores calculated hours
    - On success: publishes event to EventBridge
-7. Client polls `/get-ticket` until status === `populated`
+7. Client polls `/tickets/{ticketId}` until status === `populated`
 
 ---
 
@@ -227,7 +227,7 @@ After the S3 PUT, the client polls `/get-ticket`:
 - UI shows badge if there are unprocessed tickets
 - Admin groups tickets by earliest date, clicks "Generate Invoice"
 
-### POST /invoices/generate → dt-invoice-generator Lambda
+### POST /invoices → dt-invoice-generator Lambda
 
 - Fetches all tickets from `ticket-db` with status === `populated` and matching date (using `status-date-index`)
 - Single DynamoDB transaction: updates all matched tickets to `generating invoice` only if status === `populated`
