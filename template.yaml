@@ -1,111 +1,232 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  CCS Ticket Backend — event-driven ticket processing pipeline
+    CCS Ticket Backend — event-driven ticket processing pipeline
 
 Globals:
-  Function:
-    Runtime: nodejs22.x
-    Architectures:
-      - arm64
-    Timeout: 30
-    Tracing: Active
-    LoggingConfig:
-      LogFormat: JSON
+    Function:
+        Runtime: nodejs22.x
+        Architectures:
+            - arm64
+        Timeout: 30
+        Tracing: Active
+        LoggingConfig:
+            LogFormat: JSON
 
 Resources:
-  Api:
-    Type: AWS::Serverless::HttpApi
-    Properties:
-      Name: dt-api
-      Auth:
-        Authorizers:
-          JwtAuthorizer:
-            FunctionArn: !GetAtt JwtAuthorizer.Arn
-            Identity:
-              Headers:
-                - Authorization
-            AuthorizerPayloadFormatVersion: "2.0"
-            EnableSimpleResponses: true
-        DefaultAuthorizer: JwtAuthorizer
-
-  Login:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: dt-login
-      CodeUri: src/
-      Handler: handlers/dt-login/index.handler
-      Environment:
-        Variables:
-          JWT_SECRET_PARAM: /dt/jwt-secret
-          VV01_PASSCODE_PARAM: /dt/passcode/vv01
-          VV02_PASSCODE_PARAM: /dt/passcode/vv02
-          ADMIN_PASSCODE_PARAM: /dt/passcode/admin
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - ssm:GetParameters
-              Resource:
-                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/jwt-secret
-                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/vv01
-                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/vv02
-                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/admin
-            - Effect: Allow
-              Action:
-                - kms:Decrypt
-              Resource: '*'
-              Condition:
-                StringEquals:
-                  kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
-      Events:
-        LoginRoute:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref Api
-            Path: /login
-            Method: POST
+    Api:
+        Type: AWS::Serverless::HttpApi
+        Properties:
+            Name: dt-api
             Auth:
-              Authorizer: NONE
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        EntryPoints:
-          - handlers/dt-login/index.mjs
-        Target: es2022
-        Sourcemap: true
-        External:
-          - '@aws-sdk/*'
+                Authorizers:
+                    JwtAuthorizer:
+                        FunctionArn: !GetAtt JwtAuthorizer.Arn
+                        Identity:
+                            Headers:
+                                - Authorization
+                        AuthorizerPayloadFormatVersion: "2.0"
+                        EnableSimpleResponses: true
+                DefaultAuthorizer: JwtAuthorizer
 
-  JwtAuthorizer:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: dt-jwt-authorizer
-      CodeUri: src/
-      Handler: handlers/dt-jwt-authorizer/index.handler
-      Environment:
-        Variables:
-          JWT_SECRET_PARAM: /dt/jwt-secret
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - ssm:GetParameters
-              Resource:
-                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/jwt-secret
-            - Effect: Allow
-              Action:
-                - kms:Decrypt
-              Resource: '*'
-              Condition:
-                StringEquals:
-                  kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        EntryPoints:
-          - handlers/dt-jwt-authorizer/index.mjs
-        Target: es2022
-        Sourcemap: true
-        External:
-          - '@aws-sdk/*'
+    Login:
+        Type: AWS::Serverless::Function
+        Properties:
+            FunctionName: dt-login
+            CodeUri: src/
+            Handler: handlers/dt-login/index.handler
+            Environment:
+                Variables:
+                    JWT_SECRET_PARAM: /dt/jwt-secret
+                    VV01_PASSCODE_PARAM: /dt/passcode/vv01
+                    VV02_PASSCODE_PARAM: /dt/passcode/vv02
+                    ADMIN_PASSCODE_PARAM: /dt/passcode/admin
+            Policies:
+                - Statement:
+                      - Effect: Allow
+                        Action:
+                            - ssm:GetParameters
+                        Resource:
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/jwt-secret
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/vv01
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/vv02
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/admin
+                      - Effect: Allow
+                        Action:
+                            - kms:Decrypt
+                        Resource: "*"
+                        Condition:
+                            StringEquals:
+                                kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+            Events:
+                LoginRoute:
+                    Type: HttpApi
+                    Properties:
+                        ApiId: !Ref Api
+                        Path: /login
+                        Method: POST
+                        Auth:
+                            Authorizer: NONE
+        Metadata:
+            BuildMethod: esbuild
+            BuildProperties:
+                EntryPoints:
+                    - handlers/dt-login/index.mjs
+                Target: es2022
+                Sourcemap: true
+                External:
+                    - "@aws-sdk/*"
+
+    JwtAuthorizer:
+        Type: AWS::Serverless::Function
+        Properties:
+            FunctionName: dt-jwt-authorizer
+            CodeUri: src/
+            Handler: handlers/dt-jwt-authorizer/index.handler
+            Environment:
+                Variables:
+                    JWT_SECRET_PARAM: /dt/jwt-secret
+            Policies:
+                - Statement:
+                      - Effect: Allow
+                        Action:
+                            - ssm:GetParameters
+                        Resource:
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/jwt-secret
+                      - Effect: Allow
+                        Action:
+                            - kms:Decrypt
+                        Resource: "*"
+                        Condition:
+                            StringEquals:
+                                kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+        Metadata:
+            BuildMethod: esbuild
+            BuildProperties:
+                EntryPoints:
+                    - handlers/dt-jwt-authorizer/index.mjs
+                Target: es2022
+                Sourcemap: true
+                External:
+                    - "@aws-sdk/*"
+
+    TicketPresign:
+        Type: AWS::Serverless::Function
+        Properties:
+            FunctionName: dt-ticket-presign
+            CodeUri: src/
+            Handler: handlers/dt-ticket-presign/index.handler
+            Environment:
+                Variables:
+                    TICKET_TABLE: !Ref TicketTable
+                    TICKET_BUCKET: !Ref TicketBucket
+            Policies:
+                - DynamoDBWritePolicy:
+                      TableName: !Ref TicketTable
+                - S3WritePolicy:
+                      BucketName: !Ref TicketBucket
+            Events:
+                CreateTicket:
+                    Type: HttpApi
+                    Properties:
+                        ApiId: !Ref Api
+                        Path: /tickets
+                        Method: POST
+        Metadata:
+            BuildMethod: esbuild
+            BuildProperties:
+                EntryPoints:
+                    - handlers/dt-ticket-presign/index.mjs
+                Target: es2022
+                Sourcemap: true
+                External:
+                    - "@aws-sdk/*"
+
+    # ── Stateful ──────────────────────────────────────────────
+
+    TicketTable:
+        Type: AWS::DynamoDB::Table
+        DeletionPolicy: Retain
+        UpdateReplacePolicy: Retain
+        Properties:
+            TableName: dt-tickets
+            BillingMode: PAY_PER_REQUEST
+            SSESpecification:
+                SSEEnabled: true
+            AttributeDefinitions:
+                - AttributeName: ticketId
+                  AttributeType: S
+                - AttributeName: status
+                  AttributeType: S
+                - AttributeName: ticketDate
+                  AttributeType: S
+            KeySchema:
+                - AttributeName: ticketId
+                  KeyType: HASH
+            GlobalSecondaryIndexes:
+                - IndexName: status-ticketDate-index
+                  KeySchema:
+                      - AttributeName: status
+                        KeyType: HASH
+                      - AttributeName: ticketDate
+                        KeyType: RANGE
+                  Projection:
+                      ProjectionType: ALL
+            PointInTimeRecoverySpecification:
+                PointInTimeRecoveryEnabled: true
+
+    TicketNumberTable:
+        Type: AWS::DynamoDB::Table
+        DeletionPolicy: Retain
+        UpdateReplacePolicy: Retain
+        Properties:
+            TableName: dt-ticket-numbers
+            BillingMode: PAY_PER_REQUEST
+            SSESpecification:
+                SSEEnabled: true
+            AttributeDefinitions:
+                - AttributeName: ticketNumber
+                  AttributeType: S
+            KeySchema:
+                - AttributeName: ticketNumber
+                  KeyType: HASH
+            PointInTimeRecoverySpecification:
+                PointInTimeRecoveryEnabled: true
+
+    TicketBucket:
+        Type: AWS::S3::Bucket
+        Metadata:
+            guard:
+                SuppressedRules:
+                    - S3_BUCKET_LOGGING_ENABLED
+        DeletionPolicy: Retain
+        UpdateReplacePolicy: Retain
+        Properties:
+            BucketName: !Sub dt-ticket-images-${AWS::AccountId}
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: true
+                BlockPublicPolicy: true
+                IgnorePublicAcls: true
+                RestrictPublicBuckets: true
+            BucketEncryption:
+                ServerSideEncryptionConfiguration:
+                    - ServerSideEncryptionByDefault:
+                          SSEAlgorithm: AES256
+            VersioningConfiguration:
+                Status: Enabled
+            LifecycleConfiguration:
+                Rules:
+                    - Id: expire-old-versions
+                      Status: Enabled
+                      NoncurrentVersionExpirationInDays: 30
+            CorsConfiguration:
+                CorsRules:
+                    - AllowedMethods: [PUT, GET]
+                      AllowedOrigins: ["*"]
+                      AllowedHeaders: ["*"]
+                      MaxAge: 3000
+
+    TicketEventBus:
+        Type: AWS::Events::EventBus
+        Properties:
+            Name: dt-ticket-events
