@@ -23,8 +23,8 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: dt-login
-      CodeUri: src/handlers/dt-login/
-      Handler: index.handler
+      CodeUri: src/
+      Handler: handlers/dt-login/index.handler
       Environment:
         Variables:
           JWT_SECRET_PARAM: /dt/jwt-secret
@@ -59,7 +59,7 @@ Resources:
       BuildMethod: esbuild
       BuildProperties:
         EntryPoints:
-          - index.mjs
+          - handlers/dt-login/index.mjs
         Target: es2022
         Sourcemap: true
         External:
