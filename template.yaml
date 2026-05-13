@@ -14,3 +14,53 @@ Globals:
       LogFormat: JSON
 
 Resources:
+  Api:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: dt-api
+
+  Login:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: dt-login
+      CodeUri: src/handlers/dt-login/
+      Handler: index.handler
+      Environment:
+        Variables:
+          JWT_SECRET_PARAM: /dt/jwt-secret
+          VV01_PASSCODE_PARAM: /dt/passcode/vv01
+          VV02_PASSCODE_PARAM: /dt/passcode/vv02
+          ADMIN_PASSCODE_PARAM: /dt/passcode/admin
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameters
+              Resource:
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/jwt-secret
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/vv01
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/vv02
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/admin
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+      Events:
+        LoginRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Path: /login
+            Method: POST
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - index.mjs
+        Target: es2022
+        Sourcemap: true
+        External:
+          - '@aws-sdk/*'

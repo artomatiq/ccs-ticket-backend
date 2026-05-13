@@ -1,0 +1,8 @@
+{
+  "name": "dt-login",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-ssm": "^3.700.0"
+  }
+}
