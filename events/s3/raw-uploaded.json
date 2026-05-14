@@ -1,0 +1,24 @@
+{
+  "Records": [
+    {
+      "eventVersion": "2.1",
+      "eventSource": "aws:s3",
+      "awsRegion": "us-east-1",
+      "eventTime": "2026-05-14T10:00:00.000Z",
+      "eventName": "ObjectCreated:Put",
+      "s3": {
+        "s3SchemaVersion": "1.0",
+        "configurationId": "TicketDbWriter-RawUpload",
+        "bucket": {
+          "name": "dt-ticket-images-dev-247570646250",
+          "arn": "arn:aws:s3:::dt-ticket-images-dev-247570646250"
+        },
+        "object": {
+          "key": "raw/01KRJ3QVY95K7BQ5NQ0F11TC1X.png",
+          "size": 12345,
+          "eTag": "test-etag"
+        }
+      }
+    }
+  ]
+}

@@ -157,6 +157,44 @@ Resources:
                 External:
                     - "@aws-sdk/*"
 
+    TicketDbWriter:
+        Type: AWS::Serverless::Function
+        Properties:
+            FunctionName: !Sub "dt-ticket-db-writer-${Stage}"
+            CodeUri: src/
+            Handler: handlers/dt-ticket-db-writer/index.handler
+            Environment:
+                Variables:
+                    TICKET_TABLE: !Sub "dt-tickets-${Stage}"
+                    EVENT_BUS_NAME: !Sub "dt-ticket-events-${Stage}"
+            Policies:
+                - DynamoDBCrudPolicy:
+                      TableName: !Ref TicketTable
+                - EventBridgePutEventsPolicy:
+                      EventBusName: !Ref TicketEventBus
+            Events:
+                RawUpload:
+                    Type: S3
+                    Properties:
+                        Bucket: !Ref TicketBucket
+                        Events: s3:ObjectCreated:*
+                        Filter:
+                            S3Key:
+                                Rules:
+                                    - Name: prefix
+                                      Value: raw/
+                                    - Name: suffix
+                                      Value: .png
+        Metadata:
+            BuildMethod: esbuild
+            BuildProperties:
+                EntryPoints:
+                    - handlers/dt-ticket-db-writer/index.mjs
+                Target: es2022
+                Sourcemap: true
+                External:
+                    - "@aws-sdk/*"
+
     # ── Stateful ──────────────────────────────────────────────
 
     TicketTable:
