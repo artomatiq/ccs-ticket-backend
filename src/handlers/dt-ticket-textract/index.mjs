@@ -215,21 +215,11 @@ export const handler = async (event) => {
 
     if (extracted.start) {
       const parsed = parseTime(extracted.start)
-      if (!parsed) {
-        extracted.start = ""
-        confidence.start = 0
-      } else {
-        extracted.start = parsed
-      }
+      if (parsed) extracted.start = parsed
     }
     if (extracted.stop) {
       const parsed = parseTime(extracted.stop)
-      if (!parsed) {
-        extracted.stop = ""
-        confidence.stop = 0
-      } else {
-        extracted.stop = parsed
-      }
+      if (parsed) extracted.stop = parsed
     }
 
     if (extracted.truckNo) {
@@ -239,11 +229,6 @@ export const handler = async (event) => {
         .replace(/O/g, "0")
         .replace(/I/g, "1")
         .replace(/L/g, "1")
-    }
-    const truckRegex = /^VV\d{2}$/
-    if (!truckRegex.test(extracted.truckNo)) {
-      extracted.truckNo = ""
-      confidence.truckNo = 0
     }
 
     await dynamo.send(
