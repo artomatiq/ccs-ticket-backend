@@ -242,6 +242,46 @@ Resources:
                 External:
                     - "@aws-sdk/*"
 
+    TicketTextract:
+        Type: AWS::Serverless::Function
+        Properties:
+            FunctionName: !Sub "dt-ticket-textract-${Stage}"
+            CodeUri: src/
+            Handler: handlers/dt-ticket-textract/index.handler
+            MemorySize: 1024
+            Timeout: 60
+            Environment:
+                Variables:
+                    TICKET_TABLE: !Sub "dt-tickets-${Stage}"
+            Policies:
+                - DynamoDBCrudPolicy:
+                      TableName: !Ref TicketTable
+                - S3ReadPolicy:
+                      BucketName: !Ref TicketBucket
+                - Statement:
+                      - Effect: Allow
+                        Action: textract:AnalyzeDocument
+                        Resource: "*"
+            Events:
+                TicketValidated:
+                    Type: EventBridgeRule
+                    Properties:
+                        EventBusName: !Ref TicketEventBus
+                        Pattern:
+                            source:
+                                - dt.ticket
+                            detail-type:
+                                - TicketValidated
+        Metadata:
+            BuildMethod: esbuild
+            BuildProperties:
+                EntryPoints:
+                    - handlers/dt-ticket-textract/index.mjs
+                Target: es2022
+                Sourcemap: true
+                External:
+                    - "@aws-sdk/*"
+
     # ── Stateful ──────────────────────────────────────────────
 
     TicketTable:

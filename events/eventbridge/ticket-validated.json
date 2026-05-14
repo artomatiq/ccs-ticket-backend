@@ -1,0 +1,16 @@
+{
+  "version": "0",
+  "id": "test-event-id",
+  "detail-type": "TicketValidated",
+  "source": "dt.ticket",
+  "account": "247570646250",
+  "time": "2026-05-14T10:00:00Z",
+  "region": "us-east-1",
+  "resources": [],
+  "detail": {
+    "ticketId": "01KRJCQH5D44FY6X94ZVMQMKZM",
+    "ticketNumber": "143098",
+    "bucket": "dt-ticket-images-dev-247570646250",
+    "validatedKey": "validated/01KRJCQH5D44FY6X94ZVMQMKZM.jpg"
+  }
+}
