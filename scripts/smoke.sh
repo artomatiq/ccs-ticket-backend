@@ -70,6 +70,31 @@ if [[ -n "$TOKEN" ]]; then
   [[ -n "$TID" ]] && echo "  → ticketId: $TID"
 fi
 
+echo "→ GET /tickets/some-id (no auth)"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "$API/tickets/01TEST")
+check "GET /tickets/{id} no-auth" "401" "$CODE"
+
+echo "→ GET /tickets (no auth)"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "$API/tickets")
+check "GET /tickets no-auth" "401" "$CODE"
+
+if [[ -n "$TOKEN" ]]; then
+  echo "→ GET /tickets (driver — admin only)"
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' "$API/tickets" \
+    -H "authorization: Bearer $TOKEN")
+  check "GET /tickets driver→admin-only" "403" "$CODE"
+fi
+
+ADMIN_PW="${SMOKE_ADMIN_PASSCODE:-admin}"
+ADMIN_TOKEN=$(curl -s -X POST "$API/login" -H 'content-type: application/json' \
+  -d "$(jq -cn --arg pw "$ADMIN_PW" '{passcode: $pw}')" | jq -r '.token // empty')
+if [[ -n "$ADMIN_TOKEN" ]]; then
+  echo "→ GET /tickets (admin)"
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' "$API/tickets" \
+    -H "authorization: Bearer $ADMIN_TOKEN")
+  check "GET /tickets admin" "200" "$CODE"
+fi
+
 rm -f /tmp/smoke.json
 echo
 echo "Result: $PASS passed, $FAIL failed"
