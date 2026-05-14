@@ -104,19 +104,42 @@ case "$STATUS" in
     fi
     rm -f /tmp/pipeline-confirm.json
 
-    FINAL=$(aws dynamodb get-item --table-name "$TABLE" \
-      --key "{\"ticketId\":{\"S\":\"$TID\"}}" \
-      --query 'Item.status.S' --output text 2>/dev/null || echo "")
+    echo "→ Wait for sheets-writer to populate (up to 30s)..."
+    FINAL=""
+    for i in $(seq 1 30); do
+      FINAL=$(aws dynamodb get-item --table-name "$TABLE" \
+        --key "{\"ticketId\":{\"S\":\"$TID\"}}" \
+        --query 'Item.status.S' --output text 2>/dev/null || echo "")
+      case "$FINAL" in
+        populated|failed) break ;;
+      esac
+      sleep 1
+    done
+
     echo
-    echo "Dynamo record after confirm:"
+    echo "Dynamo record after confirm + populate:"
     print_record
     echo
-    if [[ "$FINAL" == "confirmed" ]]; then
-      echo "✓ Pipeline succeeded end-to-end (uploaded → validated → extracted → confirmed)"
-    else
-      echo "✗ Expected status 'confirmed', got '$FINAL'" >&2
-      exit 1
-    fi
+    case "$FINAL" in
+      populated)
+        SHEETS_ROW=$(aws dynamodb get-item --table-name "$TABLE" \
+          --key "{\"ticketId\":{\"S\":\"$TID\"}}" \
+          --query 'Item.sheetsRow.N' --output text 2>/dev/null || echo "")
+        echo "✓ Pipeline succeeded end-to-end (uploaded → validated → extracted → confirmed → populated, sheets row: ${SHEETS_ROW:-?})"
+        ;;
+      failed)
+        echo "✗ Sheets-writer marked the ticket as 'failed'" >&2
+        exit 1
+        ;;
+      confirmed)
+        echo "✗ Status stuck at 'confirmed' — sheets-writer likely didn't fire (check EventBridge rule + Lambda logs)" >&2
+        exit 1
+        ;;
+      *)
+        echo "✗ Unexpected status after confirm: '${FINAL:-<none>}'" >&2
+        exit 1
+        ;;
+    esac
     ;;
   rejected)
     echo "→ Verifying rejected/$TID.jpg in S3..."
