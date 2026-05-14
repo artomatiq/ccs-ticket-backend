@@ -109,8 +109,17 @@ case "$STATUS" in
     [[ -z "$TICKET_NUMBER" ]] && { echo "✗ No ticketNumber on record" >&2; exit 1; }
 
     echo "→ POST /tickets/$TID/confirm (ticketNumber=$TICKET_NUMBER)..."
-    # Mirror what the UI will do: submit extractedData as confirmedData (with a date fallback).
-    BODY=$(echo "$EXTRACTED" | jq -c '. + {date: (.date // "2026-01-01" | if . == "" then "2026-01-01" else . end)}')
+    # Mirror what the UI will do: submit extractedData as confirmedData. Fill placeholders
+    # for any required field Textract left empty, so we test the pipeline (not Textract accuracy).
+    BODY=$(echo "$EXTRACTED" | jq -c '
+      . + {
+        date:         (.date         // "" | if . == "" then "2026-01-01"          else . end),
+        customerName: (.customerName // "" | if . == "" then "Placeholder Customer" else . end),
+        jobName:      (.jobName      // "" | if . == "" then "Placeholder Job"      else . end),
+        start:        (.start        // "" | if . == "" then "08:00"                else . end),
+        stop:         (.stop         // "" | if . == "" then "21:00"                else . end),
+        truckNo:      (.truckNo      // "" | if . == "" then "VV99"                 else . end)
+      }')
     CONFIRM_CODE=$(curl -s -o /tmp/pipeline-confirm.json -w '%{http_code}' \
       -X POST "$API/tickets/$TID/confirm" \
       -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
