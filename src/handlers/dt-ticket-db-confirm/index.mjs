@@ -47,6 +47,8 @@ const parseDate = (s) => {
   return { normalized, dateObj }
 }
 
+const lowercaseWords = (s) => s.split(/\s+/).filter((w) => /^[a-z]/.test(w))
+
 const timeToMinutes = (s) => {
   const m = s.match(/^(\d{2}):(\d{2})$/)
   if (!m) return null
@@ -70,8 +72,10 @@ export const handler = async (event) => {
   }
 
   const REQUIRED_FIELDS = ["ticketNumber", "date", "day", "customerName", "jobName", "start", "stop", "truckNo"]
-  const missing = REQUIRED_FIELDS.filter((k) => !String(confirmedData[k] ?? "").trim())
-  if (missing.length) return json(400, { error: "Missing required fields", details: missing })
+  const bad = REQUIRED_FIELDS.filter(
+    (k) => typeof confirmedData[k] !== "string" || !confirmedData[k].trim()
+  )
+  if (bad.length) return json(400, { error: "Missing or non-string fields", details: bad })
 
   const ticketNumber = confirmedData.ticketNumber
 
@@ -83,6 +87,31 @@ export const handler = async (event) => {
 
   const errors = []
 
+  const FORMULA_RE = /^\s*[=+\-@]/
+  for (const k of ["customerName", "jobName", "ticketNumber"]) {
+    if (FORMULA_RE.test(confirmedData[k])) {
+      errors.push(`${k} cannot start with =, +, -, or @`)
+    }
+  }
+
+  if (!/^\d{4,10}$/.test(confirmedData.ticketNumber)) {
+    errors.push("ticketNumber must be 4-10 digits")
+  }
+
+  const MAX_LEN = { customerName: 50, jobName: 50 }
+  for (const [k, max] of Object.entries(MAX_LEN)) {
+    if (confirmedData[k].length > max) {
+      errors.push(`${k} exceeds ${max} chars`)
+    }
+  }
+
+  for (const k of ["customerName", "jobName"]) {
+    const bad = lowercaseWords(confirmedData[k])
+    if (bad.length) {
+      errors.push(`${k} has lowercase words: ${bad.join(", ")}`)
+    }
+  }
+
   const dateResult = parseDate(confirmedData.date)
   if (dateResult.error) {
     errors.push(dateResult.error)
@@ -91,6 +120,8 @@ export const handler = async (event) => {
     const expectedDay = DAY_NAMES[dateResult.dateObj.getUTCDay()]
     if (confirmedData.day.toLowerCase() !== expectedDay.toLowerCase()) {
       errors.push(`day '${confirmedData.day}' does not match date (expected ${expectedDay})`)
+    } else {
+      confirmedData.day = expectedDay
     }
     const now = new Date()
     const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
