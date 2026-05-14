@@ -117,11 +117,11 @@ export const handler = async (event) => {
       if (b.EntityTypes?.includes("VALUE")) valueMap[b.Id] = b
     })
 
-    const iou = (a, b) => {
+    const overlap = (a, b) => {
       const xO = Math.max(0, Math.min(a.Left + a.Width, b.Left + b.Width) - Math.max(a.Left, b.Left))
       const yO = Math.max(0, Math.min(a.Top + a.Height, b.Top + b.Height) - Math.max(a.Top, b.Top))
-      const inter = xO * yO
-      return inter / (a.Width * a.Height + b.Width * b.Height - inter)
+      const minArea = Math.min(a.Width * a.Height, b.Width * b.Height)
+      return minArea === 0 ? 0 : (xO * yO) / minArea
     }
 
     const textOf = (block) => {
@@ -133,7 +133,7 @@ export const handler = async (event) => {
       const area = (b) => b.Geometry.BoundingBox.Width * b.Geometry.BoundingBox.Height
       const keep = new Set()
       for (const k of [...kids].sort((a, b) => area(b) - area(a))) {
-        const dup = [...keep].some((id) => iou(k.Geometry.BoundingBox, kids.find((c) => c.Id === id).Geometry.BoundingBox) > 0.5)
+        const dup = [...keep].some((id) => overlap(k.Geometry.BoundingBox, kids.find((c) => c.Id === id).Geometry.BoundingBox) > 0.5)
         if (!dup) keep.add(k.Id)
       }
       return kids.filter((b) => keep.has(b.Id)).map((b) => b.Text).join(" ")
