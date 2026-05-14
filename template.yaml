@@ -125,8 +125,8 @@ Resources:
             Handler: handlers/dt-ticket-presign/index.handler
             Environment:
                 Variables:
-                    TICKET_TABLE: !Ref TicketTable
-                    TICKET_BUCKET: !Ref TicketBucket
+                    TICKET_TABLE: !Sub "dt-tickets-${Stage}"
+                    TICKET_BUCKET: !Sub "dt-ticket-images-${Stage}-${AWS::AccountId}"
             Policies:
                 - DynamoDBWritePolicy:
                       TableName: !Ref TicketTable
