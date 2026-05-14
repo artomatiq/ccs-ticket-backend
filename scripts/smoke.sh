@@ -75,7 +75,7 @@ if [[ -n "$TOKEN" ]]; then
   if [[ -n "$UPLOAD_URL" && -n "$TID" ]]; then
     echo "→ PUT to presigned URL → S3 trigger → db-writer flips status"
     echo "fake png" | curl -s -X PUT --data-binary @- \
-      -H 'content-type: image/png' "$UPLOAD_URL" -o /dev/null
+      -H 'content-type: image/jpeg' "$UPLOAD_URL" -o /dev/null
     STATUS=""
     for i in 1 2 3 4 5; do
       STATUS=$(aws dynamodb get-item --table-name "$TABLE" \

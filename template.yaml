@@ -184,7 +184,7 @@ Resources:
                                     - Name: prefix
                                       Value: raw/
                                     - Name: suffix
-                                      Value: .png
+                                      Value: .jpg
         Metadata:
             BuildMethod: esbuild
             BuildProperties:

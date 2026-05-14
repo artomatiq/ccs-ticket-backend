@@ -80,9 +80,9 @@ export const handler = async (event) => {
         await s3.send(
           new PutObjectCommand({
             Bucket: BUCKET,
-            Key: `rejected/${ticketId}.png`,
+            Key: `rejected/${ticketId}.jpg`,
             Body: imgBuffer,
-            ContentType: "image/png",
+            ContentType: "image/jpeg",
           })
         )
       }
@@ -99,7 +99,7 @@ export const handler = async (event) => {
   const obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: rawKey }))
   const imgBuffer = await streamToBuffer(obj.Body)
 
-  if (obj.ContentType !== "image/png") {
+  if (obj.ContentType !== "image/jpeg") {
     return reject("unsupported file type", imgBuffer)
   }
 
@@ -137,13 +137,13 @@ export const handler = async (event) => {
     return reject(`Ticket ${ticketNumber} already filed`, imgBuffer)
   }
 
-  const validatedKey = `validated/${ticketId}.png`
+  const validatedKey = `validated/${ticketId}.jpg`
   await s3.send(
     new PutObjectCommand({
       Bucket: BUCKET,
       Key: validatedKey,
       Body: imgBuffer,
-      ContentType: "image/png",
+      ContentType: "image/jpeg",
     })
   )
 

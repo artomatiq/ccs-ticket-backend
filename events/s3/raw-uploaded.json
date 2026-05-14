@@ -14,7 +14,7 @@
           "arn": "arn:aws:s3:::dt-ticket-images-dev-247570646250"
         },
         "object": {
-          "key": "raw/01KRJ3QVY95K7BQ5NQ0F11TC1X.png",
+          "key": "raw/01KRJ3QVY95K7BQ5NQ0F11TC1X.jpg",
           "size": 12345,
           "eTag": "test-etag"
         }

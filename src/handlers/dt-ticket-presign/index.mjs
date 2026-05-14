@@ -22,7 +22,7 @@ export const handler = async (event) => {
     }
 
     const ticketId = ulid()
-    const rawKey = `raw/${ticketId}.png`
+    const rawKey = `raw/${ticketId}.jpg`
     const now = Date.now()
 
     await dynamo.send(
@@ -44,7 +44,7 @@ export const handler = async (event) => {
       new PutObjectCommand({
         Bucket: BUCKET,
         Key: rawKey,
-        ContentType: "image/png",
+        ContentType: "image/jpeg",
       }),
       { expiresIn: URL_EXPIRY_SECONDS }
     )

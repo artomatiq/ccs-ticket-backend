@@ -15,7 +15,7 @@ export const handler = async (event) => {
     const bucket = record.s3.bucket.name
     const key = decodeURIComponent(record.s3.object.key)
 
-    const match = key.match(/^raw\/([0-9A-HJKMNP-TV-Z]{26})\.png$/)
+    const match = key.match(/^raw\/([0-9A-HJKMNP-TV-Z]{26})\.jpg$/)
     if (!match) {
       console.error("Unexpected key format:", key)
       return
