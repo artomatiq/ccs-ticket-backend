@@ -15,6 +15,7 @@ const BUCKET = process.env.TICKET_BUCKET
 const BUS = process.env.EVENT_BUS_NAME
 const SHEET_NAME = process.env.SHEET_NAME
 const RATE = Number(process.env.RATE)
+const MAX_AMOUNT = 5000
 const GOOGLE_SA_SECRET = process.env.GOOGLE_SA_SECRET
 
 let sheetsClient = null
@@ -80,6 +81,33 @@ export const handler = async (event) => {
 
   const d = ticket.confirmedData
   const { hours, amount } = computeHoursAndAmount(d)
+
+  const reject = async (msg) => {
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { ticketId },
+        UpdateExpression: "SET #status = :rejected, #ts.#rejectedAt = :now, statusMessage = :msg",
+        ConditionExpression: "#status = :populating",
+        ExpressionAttributeNames: {
+          "#status": "status",
+          "#ts": "timestamps",
+          "#rejectedAt": "rejectedAt",
+        },
+        ExpressionAttributeValues: {
+          ":populating": "populating",
+          ":rejected": "rejected",
+          ":now": Date.now(),
+          ":msg": msg,
+        },
+      })
+    )
+    console.log("Rejected:", ticketId, msg)
+  }
+
+  if (hours <= 0) return reject("Stop time is not after start time")
+  if (amount > MAX_AMOUNT) return reject(`Amount $${amount} exceeds maximum of $${MAX_AMOUNT}`)
+
   const imageUrl = ticket.validatedKey
     ? `https://${BUCKET}.s3.amazonaws.com/${ticket.validatedKey}`
     : ""
