@@ -106,6 +106,8 @@ export const handler = async (event) => {
       })
     )
 
+    console.log("Textract raw blocks:", JSON.stringify(textractRes.Blocks))
+
     const blocks = textractRes.Blocks || []
     const kvBlocks = blocks.filter((b) => b.BlockType === "KEY_VALUE_SET")
     const keyMap = {}
