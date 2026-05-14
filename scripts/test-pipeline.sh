@@ -25,7 +25,24 @@ cd "$(dirname "$0")/.."
 
 ACCT=$(aws sts get-caller-identity --query Account --output text)
 TABLE="dt-tickets-${STAGE}"
+NUMBER_TABLE="dt-ticket-numbers-${STAGE}"
 BUCKET="dt-ticket-images-${STAGE}-${ACCT}"
+TICKET_NUMBER=""
+
+cleanup() {
+  echo "→ Cleaning up Dynamo + S3 artifacts for $TID..."
+  aws dynamodb delete-item --table-name "$TABLE" \
+    --key "{\"ticketId\":{\"S\":\"$TID\"}}" >/dev/null 2>&1 || true
+  if [[ -n "$TICKET_NUMBER" ]]; then
+    aws dynamodb delete-item --table-name "$NUMBER_TABLE" \
+      --key "{\"ticketNumber\":{\"S\":\"$TICKET_NUMBER\"}}" >/dev/null 2>&1 || true
+  fi
+  aws s3 rm "s3://$BUCKET/raw/$TID.jpg" 2>/dev/null || true
+  aws s3 rm "s3://$BUCKET/validated/$TID.jpg" 2>/dev/null || true
+  aws s3 rm "s3://$BUCKET/rejected/$TID.jpg" 2>/dev/null || true
+  echo "  cleaned: ticket row, number row, raw/validated/rejected S3 objects"
+  echo "  ⚠ sheets row not cleaned (requires Google API auth) — clear manually if needed"
+}
 
 echo "Pipeline test against $API (stage=$STAGE)"
 echo "Fixture: $FIXTURE ($(wc -c < "$FIXTURE" | tr -d ' ') bytes)"
@@ -85,13 +102,15 @@ case "$STATUS" in
     aws s3 ls "s3://$BUCKET/validated/$TID.jpg" \
       || { echo "✗ Status is extracted but S3 object missing" >&2; exit 1; }
 
-    TICKET_NUMBER=$(aws dynamodb get-item --table-name "$TABLE" \
-      --key "{\"ticketId\":{\"S\":\"$TID\"}}" \
-      --query 'Item.ticketNumber.S' --output text 2>/dev/null || echo "")
+    EXTRACTED=$(aws dynamodb get-item --table-name "$TABLE" \
+      --key "{\"ticketId\":{\"S\":\"$TID\"}}" --output json 2>/dev/null \
+      | jq '.Item.extractedData.M // {} | with_entries(.value = .value.S)')
+    TICKET_NUMBER=$(echo "$EXTRACTED" | jq -r '.ticketNumber // empty')
     [[ -z "$TICKET_NUMBER" ]] && { echo "✗ No ticketNumber on record" >&2; exit 1; }
 
     echo "→ POST /tickets/$TID/confirm (ticketNumber=$TICKET_NUMBER)..."
-    BODY=$(jq -cn --arg tn "$TICKET_NUMBER" '{ticketNumber: $tn, date: "2026-01-01", customerName: "Test Customer", jobName: "Test Job"}')
+    # Mirror what the UI will do: submit extractedData as confirmedData (with a date fallback).
+    BODY=$(echo "$EXTRACTED" | jq -c '. + {date: (.date // "2026-01-01" | if . == "" then "2026-01-01" else . end)}')
     CONFIRM_CODE=$(curl -s -o /tmp/pipeline-confirm.json -w '%{http_code}' \
       -X POST "$API/tickets/$TID/confirm" \
       -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
@@ -126,6 +145,8 @@ case "$STATUS" in
           --key "{\"ticketId\":{\"S\":\"$TID\"}}" \
           --query 'Item.sheetsRow.N' --output text 2>/dev/null || echo "")
         echo "✓ Pipeline succeeded end-to-end (uploaded → validated → extracted → confirmed → populated, sheets row: ${SHEETS_ROW:-?})"
+        echo
+        cleanup
         ;;
       failed)
         echo "✗ Sheets-writer marked the ticket as 'failed'" >&2
@@ -145,6 +166,8 @@ case "$STATUS" in
     echo "→ Verifying rejected/$TID.jpg in S3..."
     aws s3 ls "s3://$BUCKET/rejected/$TID.jpg" || true
     echo "⚠ Pipeline rejected the ticket (this may be expected for some fixtures)"
+    echo
+    cleanup
     ;;
   failed)
     echo "✗ Pipeline failed during extraction" >&2

@@ -144,6 +144,15 @@ export const handler = async (event) => {
       normalizedKvMap[normKey] = v
     }
 
+    console.log(
+      "Textract raw KV map:",
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(normalizedKvMap).map(([k, v]) => [k, { text: v.text, confidence: Math.round(v.confidence) }])
+        )
+      )
+    )
+
     const extracted = {
       ticketNumber,
       date: normalizedKvMap["date"]?.text || "",
