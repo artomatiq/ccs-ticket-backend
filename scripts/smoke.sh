@@ -95,6 +95,33 @@ if [[ -n "$ADMIN_TOKEN" ]]; then
   check "GET /tickets admin" "200" "$CODE"
 fi
 
+echo "→ POST /tickets/{id}/confirm (no auth)"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/tickets/01TEST/confirm" \
+  -H 'content-type: application/json' -d '{"ticketNumber":"1","date":"2026-01-01"}')
+check "POST /confirm no-auth" "401" "$CODE"
+
+if [[ -n "$TOKEN" ]]; then
+  echo "→ POST /tickets/{id}/confirm (missing ticketNumber)"
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/tickets/01TEST/confirm" \
+    -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}')
+  check "POST /confirm missing-ticketNumber" "400" "$CODE"
+
+  echo "→ POST /tickets/{id}/confirm (nonexistent ticket)"
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+    -X POST "$API/tickets/01NONEXISTENT0000000000000/confirm" \
+    -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"ticketNumber":"1","date":"2026-01-01"}')
+  check "POST /confirm not-found" "404" "$CODE"
+
+  if [[ -n "${TID:-}" ]]; then
+    echo "→ POST /tickets/{id}/confirm (wrong state — fresh ticket)"
+    CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/tickets/$TID/confirm" \
+      -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+      -d '{"ticketNumber":"1","date":"2026-01-01"}')
+    check "POST /confirm wrong-state" "409" "$CODE"
+  fi
+fi
+
 rm -f /tmp/smoke.json
 echo
 echo "Result: $PASS passed, $FAIL failed"
