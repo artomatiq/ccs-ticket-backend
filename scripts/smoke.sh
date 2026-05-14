@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Smoke test the deployed API end-to-end via real HTTP requests.
-# Verifies routing, authorizer wiring, IAM, and handler behavior.
+# Smoke test the deployed API end-to-end via real HTTP requests + Dynamo check.
+# Verifies routing, authorizer wiring, IAM, handler behavior, and the
+# upload→S3-trigger→db-writer→Dynamo pipeline.
 #
 # Usage:
-#   ./scripts/smoke.sh <api-url> [passcode]
+#   ./scripts/smoke.sh <api-url> [stage] [passcode]
 #
-# Pass passcode via env var (preferred for prod, keeps it out of shell history):
-#   SMOKE_PASSCODE='realprodpass' ./scripts/smoke.sh https://prod.example.com
+# Stage defaults to "dev". Pass passcode via env var (keeps it out of shell history):
+#   SMOKE_PASSCODE='realprodpass' ./scripts/smoke.sh https://prod.example.com prod
 
 set -euo pipefail
 
-API="${1:?Usage: $0 <api-url> [passcode]}"
-PW="${2:-${SMOKE_PASSCODE:-vv01}}"
+API="${1:?Usage: $0 <api-url> [stage] [passcode]}"
+STAGE="${2:-dev}"
+PW="${3:-${SMOKE_PASSCODE:-vv01}}"
+TABLE="dt-tickets-${STAGE}"
 cd "$(dirname "$0")/.."
 
 PASS=0; FAIL=0
@@ -66,7 +69,23 @@ if [[ -n "$TOKEN" ]]; then
     -H "authorization: Bearer $TOKEN")
   check "/tickets auth" "200" "$CODE"
   TID=$(jq -r '.ticketId // empty' /tmp/smoke.json)
+  UPLOAD_URL=$(jq -r '.uploadUrl // empty' /tmp/smoke.json)
   [[ -n "$TID" ]] && echo "  → ticketId: $TID"
+
+  if [[ -n "$UPLOAD_URL" && -n "$TID" ]]; then
+    echo "→ PUT to presigned URL → S3 trigger → db-writer flips status"
+    echo "fake png" | curl -s -X PUT --data-binary @- \
+      -H 'content-type: image/png' "$UPLOAD_URL" -o /dev/null
+    STATUS=""
+    for i in 1 2 3 4 5; do
+      STATUS=$(aws dynamodb get-item --table-name "$TABLE" \
+        --key "{\"ticketId\":{\"S\":\"$TID\"}}" \
+        --query 'Item.status.S' --output text 2>/dev/null || echo "")
+      [[ "$STATUS" == "uploaded" ]] && break
+      sleep 1
+    done
+    check "S3 trigger flipped status" "uploaded" "$STATUS"
+  fi
 fi
 
 rm -f /tmp/smoke.json
