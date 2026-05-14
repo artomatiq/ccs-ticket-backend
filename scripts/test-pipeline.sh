@@ -14,7 +14,7 @@ set -euo pipefail
 
 API="${1:?Usage: $0 <api-url> [stage] [fixture-path] [passcode]}"
 STAGE="${2:-dev}"
-FIXTURE="${3:-$(ls fixtures/*.jpg fixtures/*.jpeg 2>/dev/null | head -1)}"
+FIXTURE="${3:-$(find fixtures -maxdepth 1 -type f \( -name '*.jpg' -o -name '*.jpeg' \) 2>/dev/null | head -1)}"
 PW="${4:-${SMOKE_PASSCODE:-vv01}}"
 
 cd "$(dirname "$0")/.."
