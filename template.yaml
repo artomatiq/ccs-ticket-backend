@@ -355,6 +355,64 @@ Resources:
                 External:
                     - "@aws-sdk/*"
 
+    SheetsWriter:
+        Type: AWS::Serverless::Function
+        Properties:
+            FunctionName: !Sub "dt-sheets-writer-${Stage}"
+            CodeUri: src/
+            Handler: handlers/dt-sheets-writer/index.handler
+            Timeout: 60
+            Environment:
+                Variables:
+                    TICKET_TABLE: !Sub "dt-tickets-${Stage}"
+                    TICKET_NUMBER_TABLE: !Sub "dt-ticket-numbers-${Stage}"
+                    TICKET_BUCKET: !Sub "dt-ticket-images-${Stage}-${AWS::AccountId}"
+                    EVENT_BUS_NAME: !Sub "dt-ticket-events-${Stage}"
+                    SPREADSHEET_ID_PARAM: !Sub "/dt/${Stage}/sheets/spreadsheet-id"
+                    SHEET_NAME: Invoice_Spreadsheet
+                    RATE: "105"
+                    GOOGLE_SA_SECRET: dt-ticket/google-sa
+            Layers:
+                - !Ref GoogleApiLayer
+            Policies:
+                - DynamoDBCrudPolicy:
+                      TableName: !Ref TicketTable
+                - DynamoDBCrudPolicy:
+                      TableName: !Ref TicketNumberTable
+                - EventBridgePutEventsPolicy:
+                      EventBusName: !Ref TicketEventBus
+                - Statement:
+                      - Effect: Allow
+                        Action:
+                            - ssm:GetParameters
+                        Resource:
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/${Stage}/sheets/spreadsheet-id
+                      - Effect: Allow
+                        Action:
+                            - secretsmanager:GetSecretValue
+                        Resource:
+                            - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:dt-ticket/google-sa-*
+            Events:
+                TicketConfirmed:
+                    Type: EventBridgeRule
+                    Properties:
+                        EventBusName: !Ref TicketEventBus
+                        Pattern:
+                            source:
+                                - dt.ticket
+                            detail-type:
+                                - TicketConfirmed
+        Metadata:
+            BuildMethod: esbuild
+            BuildProperties:
+                EntryPoints:
+                    - handlers/dt-sheets-writer/index.mjs
+                Target: es2022
+                Sourcemap: true
+                External:
+                    - "@aws-sdk/*"
+                    - "googleapis"
+
     # ── Stateful ──────────────────────────────────────────────
 
     TicketTable:
@@ -418,9 +476,9 @@ Resources:
             BucketName: !Sub "dt-ticket-images-${Stage}-${AWS::AccountId}"
             PublicAccessBlockConfiguration:
                 BlockPublicAcls: true
-                BlockPublicPolicy: true
+                BlockPublicPolicy: false
                 IgnorePublicAcls: true
-                RestrictPublicBuckets: true
+                RestrictPublicBuckets: false
             BucketEncryption:
                 ServerSideEncryptionConfiguration:
                     - ServerSideEncryptionByDefault:
@@ -439,7 +497,37 @@ Resources:
                       AllowedHeaders: ["*"]
                       MaxAge: 3000
 
+    TicketBucketPolicy:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+            Bucket: !Ref TicketBucket
+            PolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    - Sid: PublicReadValidatedTickets
+                      Effect: Allow
+                      Principal: "*"
+                      Action: s3:GetObject
+                      Resource: !Sub "arn:aws:s3:::${TicketBucket}/validated/*"
+
     TicketEventBus:
         Type: AWS::Events::EventBus
         Properties:
             Name: !Sub "dt-ticket-events-${Stage}"
+
+    # ── Layers ────────────────────────────────────────────────
+
+    GoogleApiLayer:
+        Type: AWS::Serverless::LayerVersion
+        Properties:
+            LayerName: !Sub "dt-google-api-layer-${Stage}"
+            Description: googleapis SDK for Node.js handlers
+            ContentUri: layers/dt-google-api/
+            CompatibleRuntimes:
+                - nodejs22.x
+            CompatibleArchitectures:
+                - arm64
+            RetentionPolicy: Delete
+        Metadata:
+            BuildMethod: nodejs22.x
+            BuildArchitecture: arm64

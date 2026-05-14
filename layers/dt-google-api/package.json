@@ -1,0 +1,9 @@
+{
+  "name": "dt-google-api-layer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lambda layer providing googleapis for Node.js handlers.",
+  "dependencies": {
+    "googleapis": "^171.0.0"
+  }
+}
