@@ -43,8 +43,11 @@ export const handler = async (event) => {
     return json(400, { error: "Invalid JSON body" })
   }
 
+  const REQUIRED_FIELDS = ["ticketNumber", "date", "customerName", "jobName", "start", "stop", "truckNo"]
+  const missing = REQUIRED_FIELDS.filter((k) => !String(confirmedData[k] ?? "").trim())
+  if (missing.length) return json(400, { error: "Missing required fields", fields: missing })
+
   const ticketNumber = confirmedData.ticketNumber
-  if (!ticketNumber) return json(400, { error: "Missing ticketNumber" })
 
   const existing = await dynamo.send(new GetCommand({ TableName: TABLE, Key: { ticketId } }))
   const t = existing.Item
