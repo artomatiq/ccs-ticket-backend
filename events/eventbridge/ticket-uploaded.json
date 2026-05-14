@@ -1,0 +1,15 @@
+{
+  "version": "0",
+  "id": "test-event-id",
+  "detail-type": "TicketUploaded",
+  "source": "dt.ticket",
+  "account": "247570646250",
+  "time": "2026-05-14T10:00:00Z",
+  "region": "us-east-1",
+  "resources": [],
+  "detail": {
+    "ticketId": "01KRJ3QVY95K7BQ5NQ0F11TC1X",
+    "bucket": "dt-ticket-images-dev-247570646250",
+    "rawKey": "raw/01KRJ3QVY95K7BQ5NQ0F11TC1X.png"
+  }
+}

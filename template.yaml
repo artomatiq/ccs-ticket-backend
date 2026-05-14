@@ -195,6 +195,53 @@ Resources:
                 External:
                     - "@aws-sdk/*"
 
+    TicketValidator:
+        Type: AWS::Serverless::Function
+        Properties:
+            FunctionName: !Sub "dt-ticket-validator-${Stage}"
+            CodeUri: src/
+            Handler: handlers/dt-ticket-validator/index.handler
+            MemorySize: 512
+            Timeout: 60
+            Environment:
+                Variables:
+                    TICKET_TABLE: !Sub "dt-tickets-${Stage}"
+                    TICKET_NUMBER_TABLE: !Sub "dt-ticket-numbers-${Stage}"
+                    TICKET_BUCKET: !Sub "dt-ticket-images-${Stage}-${AWS::AccountId}"
+                    EVENT_BUS_NAME: !Sub "dt-ticket-events-${Stage}"
+            Policies:
+                - DynamoDBCrudPolicy:
+                      TableName: !Ref TicketTable
+                - DynamoDBReadPolicy:
+                      TableName: !Ref TicketNumberTable
+                - S3CrudPolicy:
+                      BucketName: !Ref TicketBucket
+                - EventBridgePutEventsPolicy:
+                      EventBusName: !Ref TicketEventBus
+                - Statement:
+                      - Effect: Allow
+                        Action: textract:DetectDocumentText
+                        Resource: "*"
+            Events:
+                TicketUploaded:
+                    Type: EventBridgeRule
+                    Properties:
+                        EventBusName: !Ref TicketEventBus
+                        Pattern:
+                            source:
+                                - dt.ticket
+                            detail-type:
+                                - TicketUploaded
+        Metadata:
+            BuildMethod: esbuild
+            BuildProperties:
+                EntryPoints:
+                    - handlers/dt-ticket-validator/index.mjs
+                Target: es2022
+                Sourcemap: true
+                External:
+                    - "@aws-sdk/*"
+
     # ── Stateful ──────────────────────────────────────────────
 
     TicketTable:
