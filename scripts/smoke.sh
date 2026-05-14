@@ -40,9 +40,25 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/login" \
   -H 'content-type: application/json' -d "$BODY")
 check "/login invalid" "401" "$CODE"
 
+echo "→ POST /login (missing body)"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/login" \
+  -H 'content-type: application/json')
+check "/login no-body" "400" "$CODE"
+
 echo "→ POST /tickets (no auth)"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/tickets")
 check "/tickets no-auth" "401" "$CODE"
+
+echo "→ POST /tickets (malformed token)"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/tickets" \
+  -H 'authorization: Bearer not.a.real.token')
+check "/tickets malformed-token" "403" "$CODE"
+
+echo "→ POST /tickets (invalid signature token)"
+BAD_TOKEN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoidnYwMSIsImlhdCI6MTQwMDAwMDAwMCwiZXhwIjoxNDAwMDAwMzYwfQ.invalidsignaturejusttomarkthistokenshapecorrectly'
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/tickets" \
+  -H "authorization: Bearer $BAD_TOKEN")
+check "/tickets bad-token" "403" "$CODE"
 
 if [[ -n "$TOKEN" ]]; then
   echo "→ POST /tickets (with auth)"
