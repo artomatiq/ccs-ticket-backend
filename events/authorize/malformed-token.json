@@ -1,0 +1,29 @@
+{
+  "version": "2.0",
+  "type": "REQUEST",
+  "routeArn": "arn:aws:execute-api:us-east-1:123456789012:abc123/$default/POST/tickets",
+  "identitySource": ["Bearer not.a.real.token"],
+  "routeKey": "POST /tickets",
+  "rawPath": "/tickets",
+  "rawQueryString": "",
+  "headers": {
+    "authorization": "Bearer not.a.real.token"
+  },
+  "requestContext": {
+    "accountId": "123456789012",
+    "apiId": "abc123",
+    "domainName": "abc123.execute-api.us-east-1.amazonaws.com",
+    "http": {
+      "method": "POST",
+      "path": "/tickets",
+      "protocol": "HTTP/1.1",
+      "sourceIp": "127.0.0.1",
+      "userAgent": "curl/8.0"
+    },
+    "requestId": "test-req-id",
+    "routeKey": "POST /tickets",
+    "stage": "$default",
+    "time": "13/May/2026:00:00:00 +0000",
+    "timeEpoch": 1747094400000
+  }
+}

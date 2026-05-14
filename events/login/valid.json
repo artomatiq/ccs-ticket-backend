@@ -1,0 +1,28 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /login",
+  "rawPath": "/login",
+  "rawQueryString": "",
+  "headers": {
+    "content-type": "application/json"
+  },
+  "requestContext": {
+    "accountId": "123456789012",
+    "apiId": "abc123",
+    "domainName": "abc123.execute-api.us-east-1.amazonaws.com",
+    "http": {
+      "method": "POST",
+      "path": "/login",
+      "protocol": "HTTP/1.1",
+      "sourceIp": "127.0.0.1",
+      "userAgent": "curl/8.0"
+    },
+    "requestId": "test-req-id",
+    "routeKey": "POST /login",
+    "stage": "$default",
+    "time": "13/May/2026:00:00:00 +0000",
+    "timeEpoch": 1747094400000
+  },
+  "body": "{\"passcode\":\"vv01\"}",
+  "isBase64Encoded": false
+}

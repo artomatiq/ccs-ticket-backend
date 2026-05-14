@@ -18,9 +18,6 @@ coverage/
 **/.aws-sam/
 samconfig.local.toml
 
-# Local test events (real values; commit the *.json placeholders only)
-events/*.local.json
-
 # macOS
 .DS_Store
 
