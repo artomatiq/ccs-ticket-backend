@@ -1,0 +1,28 @@
+{
+  "Login": {
+    "JWT_SECRET_PARAM": "/dt/dev/jwt-secret",
+    "VV01_PASSCODE_PARAM": "/dt/dev/passcode/vv01",
+    "VV02_PASSCODE_PARAM": "/dt/dev/passcode/vv02",
+    "ADMIN_PASSCODE_PARAM": "/dt/dev/passcode/admin"
+  },
+  "JwtAuthorizer": {
+    "JWT_SECRET_PARAM": "/dt/dev/jwt-secret"
+  },
+  "TicketPresign": {
+    "TICKET_TABLE": "dt-tickets-dev",
+    "TICKET_BUCKET": "dt-ticket-images-dev-247570646250"
+  },
+  "TicketDbWriter": {
+    "TICKET_TABLE": "dt-tickets-dev",
+    "EVENT_BUS_NAME": "dt-ticket-events-dev"
+  },
+  "TicketValidator": {
+    "TICKET_TABLE": "dt-tickets-dev",
+    "TICKET_NUMBER_TABLE": "dt-ticket-numbers-dev",
+    "TICKET_BUCKET": "dt-ticket-images-dev-247570646250",
+    "EVENT_BUS_NAME": "dt-ticket-events-dev"
+  },
+  "TicketTextract": {
+    "TICKET_TABLE": "dt-tickets-dev"
+  }
+}
