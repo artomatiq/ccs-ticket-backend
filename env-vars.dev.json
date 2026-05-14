@@ -28,5 +28,20 @@
   "TicketDbReader": {
     "TICKET_TABLE": "dt-tickets-dev",
     "TICKET_BUCKET": "dt-ticket-images-dev-247570646250"
+  },
+  "TicketDbConfirm": {
+    "TICKET_TABLE": "dt-tickets-dev",
+    "TICKET_NUMBER_TABLE": "dt-ticket-numbers-dev",
+    "EVENT_BUS_NAME": "dt-ticket-events-dev"
+  },
+  "SheetsWriter": {
+    "TICKET_TABLE": "dt-tickets-dev",
+    "TICKET_NUMBER_TABLE": "dt-ticket-numbers-dev",
+    "TICKET_BUCKET": "dt-ticket-images-dev-247570646250",
+    "EVENT_BUS_NAME": "dt-ticket-events-dev",
+    "SPREADSHEET_ID_PARAM": "/dt/dev/sheets/spreadsheet-id",
+    "SHEET_NAME": "Invoice_Spreadsheet",
+    "RATE": "105",
+    "GOOGLE_SA_SECRET": "dt-ticket/google-sa"
   }
 }
