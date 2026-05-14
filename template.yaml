@@ -320,6 +320,41 @@ Resources:
                 External:
                     - "@aws-sdk/*"
 
+    TicketDbConfirm:
+        Type: AWS::Serverless::Function
+        Properties:
+            FunctionName: !Sub "dt-ticket-db-confirm-${Stage}"
+            CodeUri: src/
+            Handler: handlers/dt-ticket-db-confirm/index.handler
+            Environment:
+                Variables:
+                    TICKET_TABLE: !Sub "dt-tickets-${Stage}"
+                    TICKET_NUMBER_TABLE: !Sub "dt-ticket-numbers-${Stage}"
+                    EVENT_BUS_NAME: !Sub "dt-ticket-events-${Stage}"
+            Policies:
+                - DynamoDBCrudPolicy:
+                      TableName: !Ref TicketTable
+                - DynamoDBCrudPolicy:
+                      TableName: !Ref TicketNumberTable
+                - EventBridgePutEventsPolicy:
+                      EventBusName: !Ref TicketEventBus
+            Events:
+                Confirm:
+                    Type: HttpApi
+                    Properties:
+                        ApiId: !Ref Api
+                        Path: /tickets/{ticketId}/confirm
+                        Method: POST
+        Metadata:
+            BuildMethod: esbuild
+            BuildProperties:
+                EntryPoints:
+                    - handlers/dt-ticket-db-confirm/index.mjs
+                Target: es2022
+                Sourcemap: true
+                External:
+                    - "@aws-sdk/*"
+
     # ── Stateful ──────────────────────────────────────────────
 
     TicketTable:
