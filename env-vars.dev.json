@@ -24,5 +24,9 @@
   },
   "TicketTextract": {
     "TICKET_TABLE": "dt-tickets-dev"
+  },
+  "TicketDbReader": {
+    "TICKET_TABLE": "dt-tickets-dev",
+    "TICKET_BUCKET": "dt-ticket-images-dev-247570646250"
   }
 }

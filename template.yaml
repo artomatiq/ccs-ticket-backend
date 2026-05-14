@@ -282,6 +282,44 @@ Resources:
                 External:
                     - "@aws-sdk/*"
 
+    TicketDbReader:
+        Type: AWS::Serverless::Function
+        Properties:
+            FunctionName: !Sub "dt-ticket-db-reader-${Stage}"
+            CodeUri: src/
+            Handler: handlers/dt-ticket-db-reader/index.handler
+            Environment:
+                Variables:
+                    TICKET_TABLE: !Sub "dt-tickets-${Stage}"
+                    TICKET_BUCKET: !Sub "dt-ticket-images-${Stage}-${AWS::AccountId}"
+            Policies:
+                - DynamoDBReadPolicy:
+                      TableName: !Ref TicketTable
+                - S3ReadPolicy:
+                      BucketName: !Ref TicketBucket
+            Events:
+                GetOne:
+                    Type: HttpApi
+                    Properties:
+                        ApiId: !Ref Api
+                        Path: /tickets/{ticketId}
+                        Method: GET
+                List:
+                    Type: HttpApi
+                    Properties:
+                        ApiId: !Ref Api
+                        Path: /tickets
+                        Method: GET
+        Metadata:
+            BuildMethod: esbuild
+            BuildProperties:
+                EntryPoints:
+                    - handlers/dt-ticket-db-reader/index.mjs
+                Target: es2022
+                Sourcemap: true
+                External:
+                    - "@aws-sdk/*"
+
     # ── Stateful ──────────────────────────────────────────────
 
     TicketTable:
