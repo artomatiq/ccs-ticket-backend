@@ -1,4 +1,4 @@
-# CCS Ticket App
+# Dump Truck Backend
 
 A ticket processing app for a small trucking/construction business. Drivers photograph paper tickets in the field; the app validates, extracts, and populates a Google Sheet, then generates invoices as PDFs.
 
@@ -127,7 +127,7 @@ Client displays the processed image for preview before uploading.
 - TODO: verify aspect ratio
 - TODO: verify blur index
 - OCRs just the ticket number using Textract
-- Checks ticket number uniqueness against `ccs-ticket-number-db` DynamoDB table
+- Checks ticket number uniqueness against `dt-ticket-number-db` DynamoDB table
   - If uniqueness check fails: updates status to `rejected` only if status === `validating`
 - TODO: normalize image size
 - Sends PUT to S3 `/validated` or `/rejected`

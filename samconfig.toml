@@ -12,9 +12,9 @@ lint = true
 
 # ── dev ──
 [dev.deploy.parameters]
-stack_name = "ccs-ticket-backend-dev"
+stack_name = "dt-backend-dev"
 region = "us-east-1"
-s3_prefix  = "ccs-ticket-backend-dev"
+s3_prefix  = "dt-backend-dev"
 parameter_overrides = "Stage=dev"
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
@@ -22,9 +22,9 @@ resolve_s3 = true
 
 # ── prod ──
 [prod.deploy.parameters]
-stack_name = "ccs-ticket-backend-prod"
+stack_name = "dt-backend-prod"
 region = "us-east-1"
-s3_prefix  = "ccs-ticket-backend-prod"
+s3_prefix  = "dt-backend-prod"
 parameter_overrides = "Stage=prod"
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true

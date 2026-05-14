@@ -13,7 +13,7 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 BUCKET="dt-ticket-images-dev-${ACCOUNT_ID}"
 REGION="us-east-1"
 
-echo "→ Deleting CloudFormation stack ccs-ticket-backend-dev..."
+echo "→ Deleting CloudFormation stack dt-backend-dev..."
 sam delete --config-env dev --no-prompts || true
 
 empty_versioned_bucket() {
