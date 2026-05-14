@@ -531,3 +531,9 @@ Resources:
         Metadata:
             BuildMethod: nodejs22.x
             BuildArchitecture: arm64
+
+Outputs:
+    ApiUrl:
+        Description: HTTP API base URL
+        Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com"
+
