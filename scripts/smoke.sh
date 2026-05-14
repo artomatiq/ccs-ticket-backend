@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
-# Smoke test the deployed API end-to-end via real HTTP requests + Dynamo check.
-# Verifies routing, authorizer wiring, IAM, handler behavior, and the
-# upload→S3-trigger→db-writer→Dynamo pipeline.
+# Smoke test the deployed API end-to-end via real HTTP requests.
+# Verifies routing, authorizer wiring, IAM, and handler behavior.
+# Pure HTTP — no fixtures, no AWS-CLI Dynamo/S3 reads. Safe for prod.
 #
 # Usage:
-#   ./scripts/smoke.sh <api-url> [stage] [passcode]
+#   ./scripts/smoke.sh <api-url> [passcode]
 #
-# Stage defaults to "dev". Pass passcode via env var (keeps it out of shell history):
-#   SMOKE_PASSCODE='realprodpass' ./scripts/smoke.sh https://prod.example.com prod
+# Pass passcode via env var (preferred for prod, keeps it out of shell history):
+#   SMOKE_PASSCODE='realprodpass' ./scripts/smoke.sh https://prod.example.com
 
 set -euo pipefail
 
-API="${1:?Usage: $0 <api-url> [stage] [passcode]}"
-STAGE="${2:-dev}"
-PW="${3:-${SMOKE_PASSCODE:-vv01}}"
-TABLE="dt-tickets-${STAGE}"
+API="${1:?Usage: $0 <api-url> [passcode]}"
+PW="${2:-${SMOKE_PASSCODE:-vv01}}"
 cd "$(dirname "$0")/.."
 
 PASS=0; FAIL=0
@@ -69,23 +67,7 @@ if [[ -n "$TOKEN" ]]; then
     -H "authorization: Bearer $TOKEN")
   check "/tickets auth" "200" "$CODE"
   TID=$(jq -r '.ticketId // empty' /tmp/smoke.json)
-  UPLOAD_URL=$(jq -r '.uploadUrl // empty' /tmp/smoke.json)
   [[ -n "$TID" ]] && echo "  → ticketId: $TID"
-
-  if [[ -n "$UPLOAD_URL" && -n "$TID" ]]; then
-    echo "→ PUT to presigned URL → S3 trigger → db-writer flips status"
-    echo "fake png" | curl -s -X PUT --data-binary @- \
-      -H 'content-type: image/jpeg' "$UPLOAD_URL" -o /dev/null
-    STATUS=""
-    for i in 1 2 3 4 5; do
-      STATUS=$(aws dynamodb get-item --table-name "$TABLE" \
-        --key "{\"ticketId\":{\"S\":\"$TID\"}}" \
-        --query 'Item.status.S' --output text 2>/dev/null || echo "")
-      [[ "$STATUS" == "uploaded" ]] && break
-      sleep 1
-    done
-    check "S3 trigger flipped status" "uploaded" "$STATUS"
-  fi
 fi
 
 rm -f /tmp/smoke.json
