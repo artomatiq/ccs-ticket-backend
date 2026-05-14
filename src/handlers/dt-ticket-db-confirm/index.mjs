@@ -18,28 +18,33 @@ const json = (statusCode, body) => ({
 const FLEET = ["VV01", "VV02"]
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
-const normalizeDate = (date) => {
-  if (!date) throw new Error("Missing date")
-  if (date.includes("-")) {
-    const [yyyy, mm, dd] = date.split("-")
-    return `${mm.padStart(2, "0")}/${dd.padStart(2, "0")}/${yyyy}`
+// Parse YYYY-MM-DD or M/D/YY[YY] formats. Returns { normalized: "MM/DD/YYYY", dateObj: UTC Date }
+// for real calendar dates (catches Feb 30, etc.), or { error: "..." }.
+const parseDate = (s) => {
+  let yyyy, mm, dd
+  if (s.includes("-")) {
+    ;[yyyy, mm, dd] = s.split("-")
+  } else if (s.includes("/")) {
+    const [m, d, y] = s.split("/")
+    yyyy = y?.length === 2 ? "20" + y : y
+    mm = m
+    dd = d
+  } else {
+    return { error: `Invalid date format: ${s}` }
   }
-  if (date.includes("/")) {
-    const [mm, dd, yy] = date.split("/")
-    const year = yy.length === 2 ? "20" + yy : yy
-    return `${mm.padStart(2, "0")}/${dd.padStart(2, "0")}/${year}`
+  if (!yyyy || !mm || !dd) return { error: `Invalid date format: ${s}` }
+  mm = mm.padStart(2, "0")
+  dd = dd.padStart(2, "0")
+  const normalized = `${mm}/${dd}/${yyyy}`
+  const dateObj = new Date(Date.UTC(+yyyy, +mm - 1, +dd))
+  if (
+    dateObj.getUTCFullYear() !== +yyyy ||
+    dateObj.getUTCMonth() !== +mm - 1 ||
+    dateObj.getUTCDate() !== +dd
+  ) {
+    return { error: `Date '${normalized}' is not a real calendar date` }
   }
-  throw new Error(`Invalid date format: ${date}`)
-}
-
-// Returns a UTC Date iff `s` is a real calendar date in MM/DD/YYYY (catches Feb 30, etc.).
-const parseMMDDYYYY = (s) => {
-  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
-  if (!m) return null
-  const [, mm, dd, yyyy] = m
-  const d = new Date(Date.UTC(+yyyy, +mm - 1, +dd))
-  if (d.getUTCFullYear() !== +yyyy || d.getUTCMonth() !== +mm - 1 || d.getUTCDate() !== +dd) return null
-  return d
+  return { normalized, dateObj }
 }
 
 const timeToMinutes = (s) => {
@@ -66,7 +71,7 @@ export const handler = async (event) => {
 
   const REQUIRED_FIELDS = ["ticketNumber", "date", "day", "customerName", "jobName", "start", "stop", "truckNo"]
   const missing = REQUIRED_FIELDS.filter((k) => !String(confirmedData[k] ?? "").trim())
-  if (missing.length) return json(400, { error: "Missing required fields", fields: missing })
+  if (missing.length) return json(400, { error: "Missing required fields", details: missing })
 
   const ticketNumber = confirmedData.ticketNumber
 
@@ -76,21 +81,23 @@ export const handler = async (event) => {
   if (t.userId !== user && user !== "ADMIN") return json(403, { error: "Forbidden" })
   if (t.status !== "extracted") return json(409, { error: `Ticket is in '${t.status}' state, not 'extracted'` })
 
-  try {
-    confirmedData.date = normalizeDate(confirmedData.date)
-  } catch (err) {
-    return json(400, { error: err.message })
-  }
-
   const errors = []
 
-  const dateObj = parseMMDDYYYY(confirmedData.date)
-  if (!dateObj) {
-    errors.push(`date '${confirmedData.date}' is not a real calendar date`)
+  const dateResult = parseDate(confirmedData.date)
+  if (dateResult.error) {
+    errors.push(dateResult.error)
   } else {
-    const expectedDay = DAY_NAMES[dateObj.getUTCDay()]
+    confirmedData.date = dateResult.normalized
+    const expectedDay = DAY_NAMES[dateResult.dateObj.getUTCDay()]
     if (confirmedData.day.toLowerCase() !== expectedDay.toLowerCase()) {
       errors.push(`day '${confirmedData.day}' does not match date (expected ${expectedDay})`)
+    }
+    const now = new Date()
+    const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+    const ticketUTC = dateResult.dateObj.getTime()
+    const dayMs = 24 * 60 * 60 * 1000
+    if (ticketUTC > todayUTC || ticketUTC < todayUTC - 7 * dayMs) {
+      errors.push(`date '${dateResult.normalized}' must be within the past 7 days`)
     }
   }
 
@@ -109,7 +116,7 @@ export const handler = async (event) => {
     errors.push(`truckNo '${confirmedData.truckNo}' does not match driver '${user}'`)
   }
 
-  if (errors.length) return json(400, { error: "Validation failed", errors })
+  if (errors.length) return json(400, { error: "Validation failed", details: errors })
 
   const now = Date.now()
 

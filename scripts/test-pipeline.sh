@@ -109,16 +109,21 @@ case "$STATUS" in
     [[ -z "$TICKET_NUMBER" ]] && { echo "✗ No ticketNumber on record" >&2; exit 1; }
 
     echo "→ POST /tickets/$TID/confirm (ticketNumber=$TICKET_NUMBER)..."
-    # Mirror what the UI will do: submit extractedData as confirmedData. Fill placeholders
-    # for any required field Textract left empty, so we test the pipeline (not Textract accuracy).
-    BODY=$(echo "$EXTRACTED" | jq -c '
+    # We're testing pipeline plumbing, not Textract accuracy. Always override date/day
+    # (past-7-day rule rejects stale fixture dates) and truckNo (must match the test user,
+    # default vv01 passcode → VV01). Other fields fall back to placeholders only when empty.
+    TODAY_DATE="$(date +'%m/%d/%Y')"
+    TODAY_DAY="$(date +'%A')"
+    BODY=$(echo "$EXTRACTED" | jq -c \
+      --arg date "$TODAY_DATE" --arg day "$TODAY_DAY" '
       . + {
-        date:         (.date         // "" | if . == "" then "2026-01-01"          else . end),
+        date:         $date,
+        day:          $day,
         customerName: (.customerName // "" | if . == "" then "Placeholder Customer" else . end),
         jobName:      (.jobName      // "" | if . == "" then "Placeholder Job"      else . end),
         start:        (.start        // "" | if . == "" then "08:00"                else . end),
         stop:         (.stop         // "" | if . == "" then "21:00"                else . end),
-        truckNo:      (.truckNo      // "" | if . == "" then "VV99"                 else . end)
+        truckNo:      "VV01"
       }')
     CONFIRM_CODE=$(curl -s -o /tmp/pipeline-confirm.json -w '%{http_code}' \
       -X POST "$API/tickets/$TID/confirm" \
