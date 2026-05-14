@@ -105,7 +105,6 @@ export const handler = async (event) => {
     console.log("Rejected:", ticketId, msg)
   }
 
-  if (hours <= 0) return reject("Stop time is not after start time")
   if (amount > MAX_AMOUNT) return reject(`Amount $${amount} exceeds maximum of $${MAX_AMOUNT}`)
 
   const imageUrl = ticket.validatedKey

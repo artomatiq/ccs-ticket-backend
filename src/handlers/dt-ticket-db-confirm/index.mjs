@@ -15,6 +15,9 @@ const json = (statusCode, body) => ({
   body: JSON.stringify(body),
 })
 
+const FLEET = ["VV01", "VV02"]
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
 const normalizeDate = (date) => {
   if (!date) throw new Error("Missing date")
   if (date.includes("-")) {
@@ -27,6 +30,24 @@ const normalizeDate = (date) => {
     return `${mm.padStart(2, "0")}/${dd.padStart(2, "0")}/${year}`
   }
   throw new Error(`Invalid date format: ${date}`)
+}
+
+// Returns a UTC Date iff `s` is a real calendar date in MM/DD/YYYY (catches Feb 30, etc.).
+const parseMMDDYYYY = (s) => {
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (!m) return null
+  const [, mm, dd, yyyy] = m
+  const d = new Date(Date.UTC(+yyyy, +mm - 1, +dd))
+  if (d.getUTCFullYear() !== +yyyy || d.getUTCMonth() !== +mm - 1 || d.getUTCDate() !== +dd) return null
+  return d
+}
+
+const timeToMinutes = (s) => {
+  const m = s.match(/^(\d{2}):(\d{2})$/)
+  if (!m) return null
+  const h = +m[1], min = +m[2]
+  if (h > 23 || min > 59) return null
+  return h * 60 + min
 }
 
 export const handler = async (event) => {
@@ -43,7 +64,7 @@ export const handler = async (event) => {
     return json(400, { error: "Invalid JSON body" })
   }
 
-  const REQUIRED_FIELDS = ["ticketNumber", "date", "customerName", "jobName", "start", "stop", "truckNo"]
+  const REQUIRED_FIELDS = ["ticketNumber", "date", "day", "customerName", "jobName", "start", "stop", "truckNo"]
   const missing = REQUIRED_FIELDS.filter((k) => !String(confirmedData[k] ?? "").trim())
   if (missing.length) return json(400, { error: "Missing required fields", fields: missing })
 
@@ -60,6 +81,35 @@ export const handler = async (event) => {
   } catch (err) {
     return json(400, { error: err.message })
   }
+
+  const errors = []
+
+  const dateObj = parseMMDDYYYY(confirmedData.date)
+  if (!dateObj) {
+    errors.push(`date '${confirmedData.date}' is not a real calendar date`)
+  } else {
+    const expectedDay = DAY_NAMES[dateObj.getUTCDay()]
+    if (confirmedData.day.toLowerCase() !== expectedDay.toLowerCase()) {
+      errors.push(`day '${confirmedData.day}' does not match date (expected ${expectedDay})`)
+    }
+  }
+
+  const startMin = timeToMinutes(confirmedData.start)
+  const stopMin = timeToMinutes(confirmedData.stop)
+  if (startMin === null) errors.push(`start '${confirmedData.start}' is not a valid HH:MM time`)
+  if (stopMin === null) errors.push(`stop '${confirmedData.stop}' is not a valid HH:MM time`)
+  if (startMin !== null && stopMin !== null && startMin >= stopMin) {
+    errors.push("stop must be after start")
+  }
+
+  if (!FLEET.includes(confirmedData.truckNo)) {
+    errors.push(`truckNo '${confirmedData.truckNo}' is not in fleet [${FLEET.join(", ")}]`)
+  }
+  if (user !== "ADMIN" && confirmedData.truckNo !== user) {
+    errors.push(`truckNo '${confirmedData.truckNo}' does not match driver '${user}'`)
+  }
+
+  if (errors.length) return json(400, { error: "Validation failed", errors })
 
   const now = Date.now()
 
