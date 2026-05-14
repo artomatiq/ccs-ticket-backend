@@ -3,6 +3,13 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
     CCS Ticket Backend — event-driven ticket processing pipeline
 
+Parameters:
+    Stage:
+        Type: String
+        Default: dev
+        AllowedValues: [dev, prod]
+        Description: Deployment environment. Drives resource naming and SSM parameter paths.
+
 Globals:
     Function:
         Runtime: nodejs22.x
@@ -17,7 +24,7 @@ Resources:
     Api:
         Type: AWS::Serverless::HttpApi
         Properties:
-            Name: dt-api
+            Name: !Sub "dt-api-${Stage}"
             Auth:
                 Authorizers:
                     JwtAuthorizer:
@@ -32,25 +39,25 @@ Resources:
     Login:
         Type: AWS::Serverless::Function
         Properties:
-            FunctionName: dt-login
+            FunctionName: !Sub "dt-login-${Stage}"
             CodeUri: src/
             Handler: handlers/dt-login/index.handler
             Environment:
                 Variables:
-                    JWT_SECRET_PARAM: /dt/jwt-secret
-                    VV01_PASSCODE_PARAM: /dt/passcode/vv01
-                    VV02_PASSCODE_PARAM: /dt/passcode/vv02
-                    ADMIN_PASSCODE_PARAM: /dt/passcode/admin
+                    JWT_SECRET_PARAM: !Sub "/dt/${Stage}/jwt-secret"
+                    VV01_PASSCODE_PARAM: !Sub "/dt/${Stage}/passcode/vv01"
+                    VV02_PASSCODE_PARAM: !Sub "/dt/${Stage}/passcode/vv02"
+                    ADMIN_PASSCODE_PARAM: !Sub "/dt/${Stage}/passcode/admin"
             Policies:
                 - Statement:
                       - Effect: Allow
                         Action:
                             - ssm:GetParameters
                         Resource:
-                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/jwt-secret
-                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/vv01
-                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/vv02
-                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/passcode/admin
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/${Stage}/jwt-secret
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/${Stage}/passcode/vv01
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/${Stage}/passcode/vv02
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/${Stage}/passcode/admin
                       - Effect: Allow
                         Action:
                             - kms:Decrypt
@@ -80,19 +87,19 @@ Resources:
     JwtAuthorizer:
         Type: AWS::Serverless::Function
         Properties:
-            FunctionName: dt-jwt-authorizer
+            FunctionName: !Sub "dt-jwt-authorizer-${Stage}"
             CodeUri: src/
             Handler: handlers/dt-jwt-authorizer/index.handler
             Environment:
                 Variables:
-                    JWT_SECRET_PARAM: /dt/jwt-secret
+                    JWT_SECRET_PARAM: !Sub "/dt/${Stage}/jwt-secret"
             Policies:
                 - Statement:
                       - Effect: Allow
                         Action:
                             - ssm:GetParameters
                         Resource:
-                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/jwt-secret
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/${Stage}/jwt-secret
                       - Effect: Allow
                         Action:
                             - kms:Decrypt
@@ -113,7 +120,7 @@ Resources:
     TicketPresign:
         Type: AWS::Serverless::Function
         Properties:
-            FunctionName: dt-ticket-presign
+            FunctionName: !Sub "dt-ticket-presign-${Stage}"
             CodeUri: src/
             Handler: handlers/dt-ticket-presign/index.handler
             Environment:
@@ -149,7 +156,7 @@ Resources:
         DeletionPolicy: Retain
         UpdateReplacePolicy: Retain
         Properties:
-            TableName: dt-tickets
+            TableName: !Sub "dt-tickets-${Stage}"
             BillingMode: PAY_PER_REQUEST
             SSESpecification:
                 SSEEnabled: true
@@ -180,7 +187,7 @@ Resources:
         DeletionPolicy: Retain
         UpdateReplacePolicy: Retain
         Properties:
-            TableName: dt-ticket-numbers
+            TableName: !Sub "dt-ticket-numbers-${Stage}"
             BillingMode: PAY_PER_REQUEST
             SSESpecification:
                 SSEEnabled: true
@@ -202,7 +209,7 @@ Resources:
         DeletionPolicy: Retain
         UpdateReplacePolicy: Retain
         Properties:
-            BucketName: !Sub dt-ticket-images-${AWS::AccountId}
+            BucketName: !Sub "dt-ticket-images-${Stage}-${AWS::AccountId}"
             PublicAccessBlockConfiguration:
                 BlockPublicAcls: true
                 BlockPublicPolicy: true
@@ -229,4 +236,4 @@ Resources:
     TicketEventBus:
         Type: AWS::Events::EventBus
         Properties:
-            Name: dt-ticket-events
+            Name: !Sub "dt-ticket-events-${Stage}"
