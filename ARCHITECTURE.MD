@@ -36,9 +36,9 @@ flowchart TD
 
     V --> W[Admin: GET /tickets?status=populated]
     W --> X[POST /invoices]
-    X --> Y[dt-invoice-generator Lambda\nDB: generating invoice]
+    X --> Y[dt-invoice-generator Lambda\nDB: generatingInvoice]
     Y --> Z[Google Apps Script\nPDF generated · uploaded to Drive]
-    Z --> AA([DB: generated · PDF URL returned])
+    Z --> AA([DB: invoiced · PDF URL returned])
 ```
 
 ---
@@ -58,8 +58,9 @@ stateDiagram-v2
     extracted --> confirmed: client confirms
     confirmed --> populating: dt-sheets-writer
     populating --> populated: Sheet write success
-    populated --> generating_invoice: dt-invoice-generator
-    generating_invoice --> invoiced: Apps Script success
+    populated --> generatingInvoice: dt-invoice-generator
+    generatingInvoice --> invoiced: Apps Script success
+    generatingInvoice --> populated: Apps Script failure (reverted)
     invoiced --> [*]
     rejected --> [*]
     failed --> [*]
@@ -122,8 +123,8 @@ Client displays the processed image for preview before uploading.
 - Updates status to `validating` only if status === `uploaded`
 - Sets `validationStartedAt` timestamp (used by `dt-ticket-stage-recovery`)
 - Downloads ticket from S3 `/raw`
-- Verifies `.png` format
-- Verifies file size
+- Verifies `image/jpeg` content type
+- Verifies file size (10 KB – 5 MB)
 - TODO: verify aspect ratio
 - TODO: verify blur index
 - OCRs just the ticket number using Textract
@@ -167,12 +168,19 @@ After the S3 PUT, the client polls `/tickets/{ticketId}`:
 4. Client sends POST to `/tickets/{ticketId}/confirm`
 5. `dt-jwt-authorizer` authorizes the token
 6. `dt-ticket-db-confirm` Lambda:
-   - Updates DB with reviewed/edited data
-   - DynamoDB transaction:
-     - Updates status to `confirmed` only if status === `extracted`
-     - Updates `ticket-number-db`
-     - Stores calculated hours
-   - On success: publishes event to EventBridge
+   - Validates the submitted `confirmedData`:
+     - All required fields present: `ticketNumber`, `date`, `day`, `customerName`, `jobName`, `start`, `stop`, `truckNo`
+     - `ticketNumber` matches `^\d{4,10}$`
+     - String fields don't start with formula-injection characters (`=`, `+`, `-`, `@`)
+     - `date` parses (accepts `YYYY-MM-DD` and `M/D/YY[YY]`) and is a real calendar date
+     - Normalizes `date` to `M/D/YYYY` (no leading zeros)
+     - `day` matches the weekday derived from `date`
+     - `date` is within the past 7 days
+     - `start`/`stop` match `HH:MM`
+   - DynamoDB transaction (atomic):
+     - Updates `ticket-db` status to `confirmed` only if status === `extracted`, sets `confirmedData` and `ticketDate`
+     - Inserts the ticket number into `ticket-number-db` (condition: `attribute_not_exists`); transaction fails if the number was already filed
+   - On success: publishes `TicketConfirmed` event to EventBridge
 7. Client polls `/tickets/{ticketId}` until status === `populated`
 
 ---
@@ -184,36 +192,33 @@ After the S3 PUT, the client polls `/tickets/{ticketId}`:
 > **Note:** Google Sheets is the business's source of truth. Tickets can be processed manually directly in Sheets. A planned **dt-sheets-sync** lambda will run at the start of the pipeline to sync Sheets → Dynamo so the backend is aware of manually processed tickets.
 
 - Updates status to `populating` only if status === `confirmed`
-- Sets `populatingStartedAt` timestamp (used by `dt-ticket-stage-recovery`)
+- Sets `populatingAt` timestamp (used by `dt-ticket-stage-recovery`)
+- Computes `hours` (quarter-hour rounded) and `amount = hours * rate` from `start`/`stop`
+- Rejects the ticket (status → `rejected`) if `amount > $5,000`
 - Builds the new row in memory using this schema:
 
-  | Col | Field        |
-  |-----|--------------|
-  | A   | Date         |
-  | B   | Customer     |
-  | C   | Job          |
-  | D   | Ticket #     |
-  | E   | Start Time   |
-  | F   | End Time     |
-  | G   | Hours        |
-  | H   | Cashflow     |
-  | I   | Invoice #    |
-  | J   | Filed        |
-  | K   | Paid         |
-  | L   | Hourly Rate  |
-  | M   | Driver       |
-  | N   | Truck #      |
+  | Col | Field         |
+  |-----|---------------|
+  | A   | Date          |
+  | B   | Customer      |
+  | C   | Job           |
+  | D   | Ticket # (`HYPERLINK` to validated image) |
+  | E   | Start Time    |
+  | F   | End Time      |
+  | G   | Hours         |
+  | H   | Amount        |
+  | I   | Invoice # (left blank; filled by Apps Script) |
+  | J   | Paid (left blank) |
+  | K   | Rate          |
+  | L   | Truck #       |
+  | M   | Notes (left blank) |
+  | N   | Flags (left blank) |
 
-- Finds the next empty row under the Ticket # column
-- Checks if the date in the previous row matches the current ticket's date
-- Determines invoice # behavior:
-  - `append to existing invoice` → reuse previous invoice #
-  - `new invoice` → increment previous invoice # (format: `26DT###`)
-- Populates: date, customer, job, ticket #, start, stop, invoice #, filed (checkbox = checked), driver, truck #
-- Performs batch write
-- DynamoDB transaction on success:
-  - Updates status to `populated` in `ticket-db` only if status === `populating`
-  - Updates status to `populated` in `ticket-number-db`
+- Appends the row via `sheets.spreadsheets.values.append` (Google atomically picks the next empty row, so no read-then-write race)
+- Parses the assigned row number out of the response's `updates.updatedRange` and persists it as `sheetsRow` on the ticket
+- Updates status to `populated` in `ticket-db` only if status === `populating`
+- Flips `ticket-number-db` row to `populated` (best-effort; skipped if not in `confirmed`)
+- Publishes `TicketPopulated` event
 
 ---
 
@@ -230,7 +235,7 @@ After the S3 PUT, the client polls `/tickets/{ticketId}`:
 ### POST /invoices → dt-invoice-generator Lambda
 
 - Fetches all tickets from `ticket-db` with status === `populated` and matching date (using `status-date-index`)
-- Single DynamoDB transaction: updates all matched tickets to `generating invoice` only if status === `populated`
+- Single DynamoDB transaction: updates all matched tickets to `generatingInvoice` only if status === `populated`, stamping `timestamps.generatingInvoiceTimestamp`
 - If any ticket fails the transition, Lambda exits with error (recovery Lambda planned)
 - Calls Google Apps Script endpoint
 
@@ -246,8 +251,22 @@ After the S3 PUT, the client polls `/tickets/{ticketId}`:
 - Writes the new invoice number into the Sheet for those rows and links the PDF URL
 - Returns success to Lambda with the PDF URL and invoice number
 
+### Invoice PDF Fetch
+
+`InvoicePdfFetch` Lambda proxies a Google Drive PDF by `fileId` (query or path parameter), returning the raw bytes base64-encoded with `Content-Type: application/pdf` and a 5-minute private cache header. Used by the admin UI to display invoice PDFs without exposing Drive credentials to the client.
+
 ### dt-invoice-generator Lambda (continued)
 
-- Receives PDF URL from Apps Script
-- Updates `ticket-db`: sets `invoiceStatus` to `generated`, sets `invoiceNumber` and `InvoicePdfKey` only if `invoiceStatus` === `generating`
+- Receives PDF URL and invoice ID from Apps Script
+- If Apps Script fails: reverts each ticket's status back to `populated` and records `lastInvoiceFailureReason` (condition: status === `generatingInvoice`)
+- On success: transactionally updates each ticket to status === `invoiced`, sets `invoiceId` and `invoicePdfUrl` (condition: status === `generatingInvoice`). If this final update fails after Apps Script already produced the PDF, tickets stay in `generatingInvoice` and require manual reconciliation (logged for tracing)
 - Returns success to client with the PDF URL
+
+---
+
+## Planned Handlers (stubs)
+
+The following handler folders exist but are not yet implemented:
+
+- **`TicketSheetsSync`** — will sync Sheets → Dynamo so tickets processed manually in the sheet are visible to the backend (referenced in [Google Sheets Population](#google-sheets-population)).
+- **`TicketStageRecovery`** — will scan for tickets stuck in transient states (`validating`, `extracting`, `populating`, `generatingInvoice`) past their `*At` timestamp and either retry or mark them failed.
