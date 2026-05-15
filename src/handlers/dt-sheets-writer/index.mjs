@@ -114,11 +114,6 @@ export const handler = async (event) => {
   const sheets = await getSheets()
 
   const FIRST_DATA_ROW = 3
-  const colRes = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A${FIRST_DATA_ROW}:A`,
-  })
-  const nextRow = FIRST_DATA_ROW + (colRes.data.values || []).length
 
   const row = [
     d.date,                                                         // A — date
@@ -139,12 +134,15 @@ export const handler = async (event) => {
     "",                                                             // N — flags
   ]
 
-  await sheets.spreadsheets.values.update({
+  const appendRes = await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A${nextRow}`,
+    range: `${SHEET_NAME}!A${FIRST_DATA_ROW}:N`,
     valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
     requestBody: { values: [row] },
   })
+
+  const nextRow = Number(appendRes.data.updates.updatedRange.match(/!A(\d+):/)[1])
 
   await dynamo.send(
     new UpdateCommand({
