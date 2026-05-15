@@ -420,7 +420,6 @@ Resources:
             CodeUri: src/
             Handler: handlers/dt-invoice-generator/index.handler
             Timeout: 60
-            ReservedConcurrentExecutions: 1
             Environment:
                 Variables:
                     TICKET_TABLE: !Sub "dt-tickets-${Stage}"
