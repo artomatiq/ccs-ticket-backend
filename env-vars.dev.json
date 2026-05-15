@@ -43,5 +43,9 @@
     "SHEET_NAME": "Invoice_Spreadsheet",
     "RATE": "105",
     "GOOGLE_SA_SECRET": "dt-ticket/google-sa"
+  },
+  "InvoiceGenerator": {
+    "TICKET_TABLE": "dt-tickets-dev",
+    "APPS_SCRIPT_URL_PARAM": "/dt/dev/apps-script-url"
   }
 }

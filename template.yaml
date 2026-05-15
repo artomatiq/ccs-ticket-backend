@@ -413,6 +413,50 @@ Resources:
                     - "@aws-sdk/*"
                     - "googleapis"
 
+    InvoiceGenerator:
+        Type: AWS::Serverless::Function
+        Properties:
+            FunctionName: !Sub "dt-invoice-generator-${Stage}"
+            CodeUri: src/
+            Handler: handlers/dt-invoice-generator/index.handler
+            Timeout: 60
+            Environment:
+                Variables:
+                    TICKET_TABLE: !Sub "dt-tickets-${Stage}"
+                    APPS_SCRIPT_URL_PARAM: !Sub "/dt/${Stage}/apps-script-url"
+            Policies:
+                - DynamoDBCrudPolicy:
+                      TableName: !Ref TicketTable
+                - Statement:
+                      - Effect: Allow
+                        Action:
+                            - ssm:GetParameters
+                        Resource:
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/${Stage}/apps-script-url
+                      - Effect: Allow
+                        Action:
+                            - kms:Decrypt
+                        Resource: "*"
+                        Condition:
+                            StringEquals:
+                                kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+            Events:
+                Generate:
+                    Type: HttpApi
+                    Properties:
+                        ApiId: !Ref Api
+                        Path: /invoices
+                        Method: POST
+        Metadata:
+            BuildMethod: esbuild
+            BuildProperties:
+                EntryPoints:
+                    - handlers/dt-invoice-generator/index.mjs
+                Target: es2022
+                Sourcemap: true
+                External:
+                    - "@aws-sdk/*"
+
     # ── Stateful ──────────────────────────────────────────────
 
     TicketTable:
