@@ -18,7 +18,7 @@ const json = (statusCode, body) => ({
 const FLEET = ["VV01", "VV02"]
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
-// Parse YYYY-MM-DD or M/D/YY[YY] formats. Returns { normalized: "MM/DD/YYYY", dateObj: UTC Date }
+// Parse YYYY-MM-DD or M/D/YY[YY] formats. Returns { normalized: "M/D/YYYY", dateObj: UTC Date }
 // for real calendar dates (catches Feb 30, etc.), or { error: "..." }.
 const parseDate = (s) => {
   let yyyy, mm, dd
@@ -33,8 +33,8 @@ const parseDate = (s) => {
     return { error: `Invalid date format: ${s}` }
   }
   if (!yyyy || !mm || !dd) return { error: `Invalid date format: ${s}` }
-  mm = mm.padStart(2, "0")
-  dd = dd.padStart(2, "0")
+  mm = String(+mm)
+  dd = String(+dd)
   const normalized = `${mm}/${dd}/${yyyy}`
   const dateObj = new Date(Date.UTC(+yyyy, +mm - 1, +dd))
   if (
