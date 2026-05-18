@@ -1,5 +1,5 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
-import { DynamoDBDocumentClient, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb"
+import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb"
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3"
 import { TextractClient, DetectDocumentTextCommand } from "@aws-sdk/client-textract"
 import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge"
@@ -108,6 +108,7 @@ export const handler = async (event) => {
     return reject(`file size out of range (${size} bytes)`, imgBuffer)
   }
 
+  //TODO: only analyze the region of interest where the ticket number is expected to be.
   const textractRes = await textract.send(
     new DetectDocumentTextCommand({
       Document: { Bytes: imgBuffer },
@@ -127,16 +128,6 @@ export const handler = async (event) => {
   }
   console.log("Extracted ticket number:", ticketNumber)
 
-  const existing = await dynamo.send(
-    new GetCommand({
-      TableName: NUMBER_TABLE,
-      Key: { ticketNumber },
-    })
-  )
-  if (existing.Item) {
-    return reject(`Ticket ${ticketNumber} already filed`, imgBuffer)
-  }
-
   const validatedKey = `validated/${ticketId}.jpg`
   await s3.send(
     new PutObjectCommand({
@@ -146,6 +137,28 @@ export const handler = async (event) => {
       ContentType: "image/jpeg",
     })
   )
+
+  try {
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: NUMBER_TABLE,
+        Key: { ticketNumber },
+        UpdateExpression: "SET ticketNumber = :ticketNumber, createdAt = :now",
+        ConditionExpression: "attribute_not_exists(ticketNumber)",
+        ExpressionAttributeValues: {
+          ":ticketNumber": ticketNumber,
+          ":now": Date.now(),
+        },
+      })
+    )
+  } catch (err) {
+    if (err.name === "ConditionalCheckFailedException") {
+      return reject(`Ticket ${ticketNumber} already filed`, imgBuffer)
+    }
+    throw err
+  }
+
+
 
   await dynamo.send(
     new UpdateCommand({
