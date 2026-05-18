@@ -1,0 +1,12 @@
+{
+    "name": "dt-sharp-layer",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Lambda layer providing sharp for Node.js handlers.",
+    "scripts": {
+        "install": "npm install --os=linux --cpu=arm64 --libc=glibc sharp"
+    },
+    "dependencies": {
+        "sharp": "^0.33.5"
+    }
+}

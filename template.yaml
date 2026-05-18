@@ -212,7 +212,7 @@ Resources:
             Policies:
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketTable
-                - DynamoDBReadPolicy:
+                - DynamoDBCrudPolicy:
                       TableName: !Ref TicketNumberTable
                 - S3CrudPolicy:
                       BucketName: !Ref TicketBucket
@@ -222,6 +222,8 @@ Resources:
                       - Effect: Allow
                         Action: textract:DetectDocumentText
                         Resource: "*"
+            Layers:
+                - !Ref SharpLayer
             Events:
                 TicketUploaded:
                     Type: EventBridgeRule
@@ -241,6 +243,7 @@ Resources:
                 Sourcemap: true
                 External:
                     - "@aws-sdk/*"
+                    - sharp
 
     TicketTextract:
         Type: AWS::Serverless::Function
@@ -567,6 +570,21 @@ Resources:
             LayerName: !Sub "dt-google-api-layer-${Stage}"
             Description: googleapis SDK for Node.js handlers
             ContentUri: layers/dt-google-api/
+            CompatibleRuntimes:
+                - nodejs22.x
+            CompatibleArchitectures:
+                - arm64
+            RetentionPolicy: Delete
+        Metadata:
+            BuildMethod: nodejs22.x
+            BuildArchitecture: arm64
+
+    SharpLayer:
+        Type: AWS::Serverless::LayerVersion
+        Properties:
+            LayerName: !Sub "dt-sharp-layer-${Stage}"
+            Description: sharp image processing library for Node.js handlers
+            ContentUri: layers/dt-sharp/
             CompatibleRuntimes:
                 - nodejs22.x
             CompatibleArchitectures:

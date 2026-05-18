@@ -3,6 +3,7 @@ import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb"
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3"
 import { TextractClient, DetectDocumentTextCommand } from "@aws-sdk/client-textract"
 import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge"
+import sharp from "sharp"
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}))
 const s3 = new S3Client({})
@@ -108,18 +109,23 @@ export const handler = async (event) => {
     return reject(`file size out of range (${size} bytes)`, imgBuffer)
   }
 
-  //TODO: only analyze the region of interest where the ticket number is expected to be.
+  const { width, height } = await sharp(imgBuffer).metadata()
+  const roiBuffer = await sharp(imgBuffer)
+    .extract({
+      left: Math.round(width * 0.667),
+      top: Math.round(height * 0.005),
+      width: Math.round(width * 0.333),
+      height: Math.round(height * 0.070),
+    })
+    .toBuffer()
+
   const textractRes = await textract.send(
     new DetectDocumentTextCommand({
-      Document: { Bytes: imgBuffer },
+      Document: { Bytes: roiBuffer },
     })
   )
   const ticketWords = textractRes.Blocks
     .filter((b) => b.BlockType === "WORD")
-    .filter((b) => {
-      const box = b.Geometry.BoundingBox
-      return box.Left >= 0.667 && box.Left <= 1.0 && box.Top >= 0.005 && box.Top <= 0.075
-    })
     .map((b) => b.Text)
   const ticketNumber = ticketWords.find((t) => /^\d{4,10}$/.test(t))
 
