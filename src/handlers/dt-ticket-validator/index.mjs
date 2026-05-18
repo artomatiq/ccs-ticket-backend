@@ -149,10 +149,9 @@ export const handler = async (event) => {
       new UpdateCommand({
         TableName: NUMBER_TABLE,
         Key: { ticketNumber },
-        UpdateExpression: "SET ticketNumber = :ticketNumber, createdAt = :now",
+        UpdateExpression: "SET createdAt = :now",
         ConditionExpression: "attribute_not_exists(ticketNumber)",
         ExpressionAttributeValues: {
-          ":ticketNumber": ticketNumber,
           ":now": Date.now(),
         },
       })
