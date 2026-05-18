@@ -33,6 +33,17 @@ const getSheets = async () => {
 
 const parseTime = (t) => (t ? new Date(`1970-01-01T${t}Z`) : null)
 
+const formatTime12h = (t) => {
+  if (!t) return ""
+  const [hStr, mStr] = t.split(":")
+  const h = Number(hStr)
+  const m = Number(mStr)
+  if (Number.isNaN(h) || Number.isNaN(m)) return t
+  const period = h >= 12 ? "PM" : "AM"
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`
+}
+
 const computeHoursAndAmount = (d) => {
   const start = parseTime(d.start)
   const stop = parseTime(d.stop)
@@ -122,8 +133,8 @@ export const handler = async (event) => {
     imageUrl                                                        // D — ticket #
       ? `=HYPERLINK("${imageUrl}", "${d.ticketNumber}")`
       : d.ticketNumber,
-    d.start,                                                        // E — start time
-    d.stop,                                                         // F — end time
+    formatTime12h(d.start),                                         // E — start time
+    formatTime12h(d.stop),                                          // F — end time
     hours,                                                          // G — hours
     amount,                                                         // H — amount
     "",                                                             // I — invoice #
