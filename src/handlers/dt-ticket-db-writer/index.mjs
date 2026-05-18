@@ -9,7 +9,6 @@ const TABLE = process.env.TICKET_TABLE
 const BUS = process.env.EVENT_BUS_NAME
 
 export const handler = async (event) => {
-  console.log("TicketDbWriter triggered")
   try {
     const record = event.Records[0]
     const bucket = record.s3.bucket.name

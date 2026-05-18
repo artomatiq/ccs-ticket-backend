@@ -27,34 +27,33 @@ const streamToBuffer = async (stream) => {
 export const handler = async (event) => {
   const ticketId = event.detail.ticketId
   const rawKey = event.detail.rawKey
-  console.log("TicketValidator triggered:", ticketId)
 
-  try {
-    await dynamo.send(
-      new UpdateCommand({
-        TableName: TABLE,
-        Key: { ticketId },
-        UpdateExpression: "SET #status = :validating, #ts.#validatingAt = :now",
-        ConditionExpression: "#status = :uploaded",
-        ExpressionAttributeNames: {
-          "#status": "status",
-          "#ts": "timestamps",
-          "#validatingAt": "validatingAt",
-        },
-        ExpressionAttributeValues: {
-          ":validating": "validating",
-          ":uploaded": "uploaded",
-          ":now": Date.now(),
-        },
-      })
-    )
-  } catch (err) {
-    if (err.name === "ConditionalCheckFailedException") {
-      console.log("Ticket not in 'uploaded' state, ignoring:", ticketId)
-      return
-    }
-    throw err
-  }
+  // try {
+  //   await dynamo.send(
+  //     new UpdateCommand({
+  //       TableName: TABLE,
+  //       Key: { ticketId },
+  //       UpdateExpression: "SET #status = :validating, #ts.#validatingAt = :now",
+  //       ConditionExpression: "#status = :uploaded",
+  //       ExpressionAttributeNames: {
+  //         "#status": "status",
+  //         "#ts": "timestamps",
+  //         "#validatingAt": "validatingAt",
+  //       },
+  //       ExpressionAttributeValues: {
+  //         ":validating": "validating",
+  //         ":uploaded": "uploaded",
+  //         ":now": Date.now(),
+  //       },
+  //     })
+  //   )
+  // } catch (err) {
+  //   if (err.name === "ConditionalCheckFailedException") {
+  //     console.log("Ticket not in 'uploaded' state, ignoring:", ticketId)
+  //     return
+  //   }
+  //   throw err
+  // }
 
   const reject = async (reason, imgBuffer) => {
     try {
@@ -63,7 +62,7 @@ export const handler = async (event) => {
           TableName: TABLE,
           Key: { ticketId },
           UpdateExpression: "SET #status = :rejected, #ts.#rejectedAt = :now, statusMessage = :msg",
-          ConditionExpression: "#status = :validating",
+          ConditionExpression: "#status = :uploaded",
           ExpressionAttributeNames: {
             "#status": "status",
             "#ts": "timestamps",
@@ -71,7 +70,7 @@ export const handler = async (event) => {
           },
           ExpressionAttributeValues: {
             ":rejected": "rejected",
-            ":validating": "validating",
+            ":uploaded": "uploaded",
             ":now": Date.now(),
             ":msg": reason,
           },
@@ -170,14 +169,14 @@ export const handler = async (event) => {
       TableName: TABLE,
       Key: { ticketId },
       UpdateExpression: "SET #status = :validated, #ts.#validatedAt = :now, validatedKey = :validatedKey, ticketNumber = :ticketNumber",
-      ConditionExpression: "#status = :validating",
+      ConditionExpression: "#status = :uploaded",
       ExpressionAttributeNames: {
         "#status": "status",
         "#ts": "timestamps",
         "#validatedAt": "validatedAt",
       },
       ExpressionAttributeValues: {
-        ":validating": "validating",
+        ":uploaded": "uploaded",
         ":validated": "validated",
         ":now": Date.now(),
         ":validatedKey": validatedKey,
