@@ -166,12 +166,9 @@ Resources:
             Environment:
                 Variables:
                     TICKET_TABLE: !Sub "dt-tickets-${Stage}"
-                    EVENT_BUS_NAME: !Sub "dt-ticket-events-${Stage}"
             Policies:
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketTable
-                - EventBridgePutEventsPolicy:
-                      EventBusName: !Ref TicketEventBus
             Events:
                 RawUpload:
                     Type: S3
@@ -208,7 +205,6 @@ Resources:
                     TICKET_TABLE: !Sub "dt-tickets-${Stage}"
                     TICKET_NUMBER_TABLE: !Sub "dt-ticket-numbers-${Stage}"
                     TICKET_BUCKET: !Sub "dt-ticket-images-${Stage}-${AWS::AccountId}"
-                    EVENT_BUS_NAME: !Sub "dt-ticket-events-${Stage}"
             Policies:
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketTable
@@ -216,24 +212,31 @@ Resources:
                       TableName: !Ref TicketNumberTable
                 - S3CrudPolicy:
                       BucketName: !Ref TicketBucket
-                - EventBridgePutEventsPolicy:
-                      EventBusName: !Ref TicketEventBus
                 - Statement:
                       - Effect: Allow
                         Action: textract:DetectDocumentText
                         Resource: "*"
+                - Statement:
+                      - Effect: Allow
+                        Action: sqs:SendMessage
+                        Resource: !GetAtt TicketValidatorDLQ.Arn
             Layers:
                 - !Ref SharpLayer
             Events:
                 TicketUploaded:
-                    Type: EventBridgeRule
+                    Type: DynamoDB
                     Properties:
-                        EventBusName: !Ref TicketEventBus
-                        Pattern:
-                            source:
-                                - dt.ticket
-                            detail-type:
-                                - TicketUploaded
+                        Stream: !GetAtt TicketTable.StreamArn
+                        StartingPosition: LATEST
+                        BatchSize: 1
+                        FilterCriteria:
+                            Filters:
+                                - Pattern: '{"dynamodb":{"NewImage":{"status":{"S":["uploaded"]}}}}'
+                        DestinationConfig:
+                            OnFailure:
+                                Destination: !GetAtt TicketValidatorDLQ.Arn
+                        BisectBatchOnFunctionError: true
+                        MaximumRetryAttempts: 3
         Metadata:
             BuildMethod: esbuild
             BuildProperties:
@@ -256,6 +259,7 @@ Resources:
             Environment:
                 Variables:
                     TICKET_TABLE: !Sub "dt-tickets-${Stage}"
+                    TICKET_BUCKET: !Sub "dt-ticket-images-${Stage}-${AWS::AccountId}"
             Policies:
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketTable
@@ -265,16 +269,25 @@ Resources:
                       - Effect: Allow
                         Action: textract:AnalyzeDocument
                         Resource: "*"
+                - Statement:
+                      - Effect: Allow
+                        Action: sqs:SendMessage
+                        Resource: !GetAtt TicketTextractDLQ.Arn
             Events:
                 TicketValidated:
-                    Type: EventBridgeRule
+                    Type: DynamoDB
                     Properties:
-                        EventBusName: !Ref TicketEventBus
-                        Pattern:
-                            source:
-                                - dt.ticket
-                            detail-type:
-                                - TicketValidated
+                        Stream: !GetAtt TicketTable.StreamArn
+                        StartingPosition: LATEST
+                        BatchSize: 1
+                        FilterCriteria:
+                            Filters:
+                                - Pattern: '{"dynamodb":{"NewImage":{"status":{"S":["validated"]}}}}'
+                        DestinationConfig:
+                            OnFailure:
+                                Destination: !GetAtt TicketTextractDLQ.Arn
+                        BisectBatchOnFunctionError: true
+                        MaximumRetryAttempts: 3
         Metadata:
             BuildMethod: esbuild
             BuildProperties:
@@ -369,7 +382,6 @@ Resources:
                     TICKET_TABLE: !Sub "dt-tickets-${Stage}"
                     TICKET_NUMBER_TABLE: !Sub "dt-ticket-numbers-${Stage}"
                     TICKET_BUCKET: !Sub "dt-ticket-images-${Stage}-${AWS::AccountId}"
-                    EVENT_BUS_NAME: !Sub "dt-ticket-events-${Stage}"
                     SPREADSHEET_ID_PARAM: !Sub "/dt/${Stage}/sheets/spreadsheet-id"
                     SHEET_NAME: Invoice_Spreadsheet
                     GOOGLE_SA_SECRET: dt-ticket/google-sa
@@ -380,8 +392,6 @@ Resources:
                       TableName: !Ref TicketTable
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketNumberTable
-                - EventBridgePutEventsPolicy:
-                      EventBusName: !Ref TicketEventBus
                 - Statement:
                       - Effect: Allow
                         Action:
@@ -553,10 +563,17 @@ Resources:
                       Action: s3:GetObject
                       Resource: !Sub "arn:aws:s3:::${TicketBucket}/validated/*"
 
-    TicketEventBus:
-        Type: AWS::Events::EventBus
+    TicketValidatorDLQ:
+        Type: AWS::SQS::Queue
         Properties:
-            Name: !Sub "dt-ticket-events-${Stage}"
+            QueueName: !Sub "dt-ticket-validator-dlq-${Stage}"
+            MessageRetentionPeriod: 1209600
+
+    TicketTextractDLQ:
+        Type: AWS::SQS::Queue
+        Properties:
+            QueueName: !Sub "dt-ticket-textract-dlq-${Stage}"
+            MessageRetentionPeriod: 1209600
 
     TicketConfirmedDLQ:
         Type: AWS::SQS::Queue

@@ -2,18 +2,15 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb"
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3"
 import { TextractClient, DetectDocumentTextCommand } from "@aws-sdk/client-textract"
-import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge"
 import sharp from "sharp"
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}))
 const s3 = new S3Client({})
 const textract = new TextractClient({})
-const events = new EventBridgeClient({})
 
 const TABLE = process.env.TICKET_TABLE
 const NUMBER_TABLE = process.env.TICKET_NUMBER_TABLE
 const BUCKET = process.env.TICKET_BUCKET
-const BUS = process.env.EVENT_BUS_NAME
 
 const MIN_SIZE = 10_000
 const MAX_SIZE = 5_000_000
@@ -25,8 +22,9 @@ const streamToBuffer = async (stream) => {
 }
 
 export const handler = async (event) => {
-  const ticketId = event.detail.ticketId
-  const rawKey = event.detail.rawKey
+  const img = event.Records[0].dynamodb.NewImage
+  const ticketId = img.ticketId.S
+  const rawKey = img.rawKey.S
 
   // try {
   //   await dynamo.send(
@@ -182,19 +180,6 @@ export const handler = async (event) => {
         ":validatedKey": validatedKey,
         ":ticketNumber": ticketNumber,
       },
-    })
-  )
-
-  await events.send(
-    new PutEventsCommand({
-      Entries: [
-        {
-          EventBusName: BUS,
-          Source: "dt.ticket",
-          DetailType: "TicketValidated",
-          Detail: JSON.stringify({ ticketId, ticketNumber, bucket: BUCKET, validatedKey }),
-        },
-      ],
     })
   )
 

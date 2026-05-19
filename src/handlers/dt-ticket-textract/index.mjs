@@ -8,6 +8,7 @@ const textract = new TextractClient({})
 const s3 = new S3Client({})
 
 const TABLE = process.env.TICKET_TABLE
+const BUCKET = process.env.TICKET_BUCKET
 
 const nameCorrections = {
   faulcomer: "Faulconer",
@@ -62,10 +63,11 @@ const parseTime = (time) => {
 }
 
 export const handler = async (event) => {
-  const ticketId = event.detail.ticketId
-  const ticketNumber = event.detail.ticketNumber
-  const bucket = event.detail.bucket
-  const validatedKey = event.detail.validatedKey
+  const img = event.Records[0].dynamodb.NewImage
+  const ticketId = img.ticketId.S
+  const ticketNumber = img.ticketNumber.S
+  const validatedKey = img.validatedKey.S
+  const bucket = BUCKET
   console.log("TicketTextract triggered:", ticketId)
 
   try {

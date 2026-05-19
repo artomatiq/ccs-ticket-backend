@@ -1,18 +1,15 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb"
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager"
-import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge"
 import { google } from "googleapis"
 import { loadParams } from "../../shared/ssm.mjs"
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}))
 const secrets = new SecretsManagerClient({})
-const events = new EventBridgeClient({})
 
 const TABLE = process.env.TICKET_TABLE
 const NUMBER_TABLE = process.env.TICKET_NUMBER_TABLE
 const BUCKET = process.env.TICKET_BUCKET
-const BUS = process.env.EVENT_BUS_NAME
 const SHEET_NAME = process.env.SHEET_NAME
 const GOOGLE_SA_SECRET = process.env.GOOGLE_SA_SECRET
 
@@ -192,24 +189,6 @@ export const handler = async (event) => {
       throw err
     }
   }
-
-  await events.send(
-    new PutEventsCommand({
-      Entries: [
-        {
-          EventBusName: BUS,
-          Source: "dt.ticket",
-          DetailType: "TicketPopulated",
-          Detail: JSON.stringify({
-            ticketId,
-            ticketNumber: d.ticketNumber,
-            sheetsRow: nextRow,
-            amount,
-          }),
-        },
-      ],
-    })
-  )
 
   console.log("Populated:", ticketId, "row:", nextRow)
 }

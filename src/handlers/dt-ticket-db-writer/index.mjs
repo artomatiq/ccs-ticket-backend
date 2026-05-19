@@ -1,12 +1,9 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb"
-import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge"
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}))
-const events = new EventBridgeClient({})
 
 const TABLE = process.env.TICKET_TABLE
-const BUS = process.env.EVENT_BUS_NAME
 
 export const handler = async (event) => {
   try {
@@ -40,20 +37,7 @@ export const handler = async (event) => {
       })
     )
 
-    await events.send(
-      new PutEventsCommand({
-        Entries: [
-          {
-            EventBusName: BUS,
-            Source: "dt.ticket",
-            DetailType: "TicketUploaded",
-            Detail: JSON.stringify({ ticketId, bucket, rawKey: key }),
-          },
-        ],
-      })
-    )
-
-    console.log("Marked uploaded + event published:", ticketId)
+    console.log("Marked uploaded:", ticketId)
   } catch (err) {
     if (err.name === "ConditionalCheckFailedException") {
       console.log("Ticket not in awaiting-upload state. Ignoring.")
