@@ -28,8 +28,10 @@ flowchart TD
     O -->|status: extracted| P[Review + edit fields in UI]
     P --> Q["POST /tickets/{ticketId}/confirm"]
     Q --> R[dt-ticket-db-confirm\nDB: confirmed]
-    R --> S{{EventBridge}}
-    S --> T[dt-sheets-writer\nDB: populated\nSheet row written]
+    R --> S{{DynamoDB Stream}}
+    S --> pipe[EventBridge Pipe\nfilter: status=confirmed]
+    pipe --> sqs[SQS Queue]
+    sqs --> T[dt-sheets-writer\nDB: populated\nSheet row written]
 
     T --> U["Client polls /tickets/{ticketId}"]
     U -->|status: populated| V[Frontend reloads]
@@ -173,28 +175,32 @@ After the S3 PUT, the client polls `/tickets/{ticketId}`:
      - `ticketNumber` matches `^\d{4,10}$`
      - String fields don't start with formula-injection characters (`=`, `+`, `-`, `@`)
      - `date` parses (accepts `YYYY-MM-DD` and `M/D/YY[YY]`) and is a real calendar date
-     - Normalizes `date` to `M/D/YYYY` (no leading zeros)
+     - Normalizes `date` to ISO `YYYY-MM-DD`
      - `day` matches the weekday derived from `date`
      - `date` is within the past 7 days
-     - `start`/`stop` match `HH:MM`
+     - `start`/`stop` match `HH:MM`; `stop` must be after `start`
+     - `truckNo` must be in fleet; must match the driver's identity (or requester is `ADMIN`)
+   - Computes `hours` (quarter-hour rounded) and `amount = hours × rate`
+   - Returns 400 if `amount > $5,000`
    - DynamoDB transaction (atomic):
-     - Updates `ticket-db` status to `confirmed` only if status === `extracted`, sets `confirmedData` and `ticketDate`
+     - Updates `ticket-db` status to `confirmed` only if status === `extracted`, sets `confirmedData`, `ticketDate`, `hours`, `amount`, and `rate`
      - Inserts the ticket number into `ticket-number-db` (condition: `attribute_not_exists`); transaction fails if the number was already filed
-   - On success: publishes `TicketConfirmed` event to EventBridge
+   - The DynamoDB write triggers the stream (no explicit event published)
 7. Client polls `/tickets/{ticketId}` until status === `populated`
 
 ---
 
 ## Google Sheets Population
 
-### EventBridge → dt-sheets-writer
+### DynamoDB Stream → EventBridge Pipe → SQS → dt-sheets-writer
 
 > **Note:** Google Sheets is the business's source of truth. Tickets can be processed manually directly in Sheets. A planned **dt-sheets-sync** lambda will run at the start of the pipeline to sync Sheets → Dynamo so the backend is aware of manually processed tickets.
 
+The confirm lambda's DynamoDB write triggers the stream. An EventBridge Pipe filters for `status = confirmed` and routes each record to an SQS queue. The SQS queue triggers `dt-sheets-writer` (batch size 1), with a DLQ for failed messages after 3 attempts.
+
 - Updates status to `populating` only if status === `confirmed`
 - Sets `populatingAt` timestamp (used by `dt-ticket-stage-recovery`)
-- Computes `hours` (quarter-hour rounded) and `amount = hours * rate` from `start`/`stop`
-- Rejects the ticket (status → `rejected`) if `amount > $5,000`
+- Reads pre-computed `hours`, `amount`, and `rate` from the ticket (set at confirm time)
 - Builds the new row in memory using this schema:
 
   | Col | Field         |

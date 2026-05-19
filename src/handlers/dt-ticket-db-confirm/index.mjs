@@ -1,13 +1,10 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb"
-import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge"
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}))
-const events = new EventBridgeClient({})
 
 const TABLE = process.env.TICKET_TABLE
 const NUMBER_TABLE = process.env.TICKET_NUMBER_TABLE
-const BUS = process.env.EVENT_BUS_NAME
 const RATE = Number(process.env.RATE)
 const MAX_AMOUNT = Number(process.env.MAX_AMOUNT)
 
@@ -196,19 +193,6 @@ export const handler = async (event) => {
     }
     throw err
   }
-
-  await events.send(
-    new PutEventsCommand({
-      Entries: [
-        {
-          EventBusName: BUS,
-          Source: "dt.ticket",
-          DetailType: "TicketConfirmed",
-          Detail: JSON.stringify({ ticketId, ticketNumber, confirmedAt: now }),
-        },
-      ],
-    })
-  )
 
   console.log("Confirmed:", ticketId, ticketNumber)
   return json(200, { ticketId, ticketNumber, status: "confirmed" })

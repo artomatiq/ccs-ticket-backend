@@ -48,7 +48,8 @@ const formatTime12h = (t) => {
 }
 
 export const handler = async (event) => {
-  const ticketId = event.detail.ticketId
+  const record = JSON.parse(event.Records[0].body)
+  const ticketId = record.dynamodb.NewImage.ticketId.S
   console.log("SheetsWriter triggered:", ticketId)
 
   let ticket
