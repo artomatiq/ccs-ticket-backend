@@ -8,6 +8,8 @@ const events = new EventBridgeClient({})
 const TABLE = process.env.TICKET_TABLE
 const NUMBER_TABLE = process.env.TICKET_NUMBER_TABLE
 const BUS = process.env.EVENT_BUS_NAME
+const RATE = Number(process.env.RATE)
+const MAX_AMOUNT = Number(process.env.MAX_AMOUNT)
 
 const json = (statusCode, body) => ({
   statusCode,
@@ -18,7 +20,7 @@ const json = (statusCode, body) => ({
 const FLEET = ["VV01", "VV02"]
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
-// Parse YYYY-MM-DD or M/D/YY[YY] formats. Returns { normalized: "M/D/YYYY", dateObj: UTC Date }
+// Parse YYYY-MM-DD or M/D/YY[YY] formats. Returns { iso: "YYYY-MM-DD", dateObj: UTC Date }
 // for real calendar dates (catches Feb 30, etc.), or { error: "..." }.
 const parseDate = (s) => {
   let yyyy, mm, dd
@@ -35,16 +37,16 @@ const parseDate = (s) => {
   if (!yyyy || !mm || !dd) return { error: `Invalid date format: ${s}` }
   mm = String(+mm)
   dd = String(+dd)
-  const normalized = `${mm}/${dd}/${yyyy}`
+  const iso = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`
   const dateObj = new Date(Date.UTC(+yyyy, +mm - 1, +dd))
   if (
     dateObj.getUTCFullYear() !== +yyyy ||
     dateObj.getUTCMonth() !== +mm - 1 ||
     dateObj.getUTCDate() !== +dd
   ) {
-    return { error: `Date '${normalized}' is not a real calendar date` }
+    return { error: `Date '${iso}' is not a real calendar date` }
   }
-  return { normalized, dateObj }
+  return { iso, dateObj }
 }
 
 const lowercaseWords = (s) => s.split(/\s+/).filter((w) => /^[a-z]/.test(w))
@@ -116,7 +118,7 @@ export const handler = async (event) => {
   if (dateResult.error) {
     errors.push(dateResult.error)
   } else {
-    confirmedData.date = dateResult.normalized
+    confirmedData.date = dateResult.iso
     const expectedDay = DAY_NAMES[dateResult.dateObj.getUTCDay()]
     if (confirmedData.day.toLowerCase() !== expectedDay.toLowerCase()) {
       errors.push(`day '${confirmedData.day}' does not match date (expected ${expectedDay})`)
@@ -128,7 +130,7 @@ export const handler = async (event) => {
     const ticketUTC = dateResult.dateObj.getTime()
     const dayMs = 24 * 60 * 60 * 1000
     if (ticketUTC > todayUTC || ticketUTC < todayUTC - 7 * dayMs) {
-      errors.push(`date '${dateResult.normalized}' must be within the past 7 days`)
+      errors.push(`date '${dateResult.iso}' must be within the past 7 days`)
     }
   }
 
@@ -149,6 +151,12 @@ export const handler = async (event) => {
 
   if (errors.length) return json(400, { error: "Validation failed", details: errors })
 
+  const hours = Math.round(((stopMin - startMin) / 60) * 4) / 4
+  const amount = hours * RATE
+  if (amount > MAX_AMOUNT) {
+    return json(400, { error: `Amount $${amount} exceeds maximum of $${MAX_AMOUNT}` })
+  }
+
   const now = Date.now()
 
   try {
@@ -161,7 +169,7 @@ export const handler = async (event) => {
               Key: { ticketId },
               ConditionExpression: "#status = :extracted",
               UpdateExpression:
-                "SET #status = :confirmed, confirmedData = :data, #ts.#confirmedAt = :now, ticketDate = :ticketDate",
+                "SET #status = :confirmed, confirmedData = :data, #ts.#confirmedAt = :now, ticketDate = :ticketDate, hours = :hours, amount = :amount, rate = :rate",
               ExpressionAttributeNames: {
                 "#status": "status",
                 "#ts": "timestamps",
@@ -173,6 +181,9 @@ export const handler = async (event) => {
                 ":data": confirmedData,
                 ":now": now,
                 ":ticketDate": confirmedData.date,
+                ":hours": hours,
+                ":amount": amount,
+                ":rate": RATE,
               },
             },
           },

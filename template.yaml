@@ -334,6 +334,8 @@ Resources:
                     TICKET_TABLE: !Sub "dt-tickets-${Stage}"
                     TICKET_NUMBER_TABLE: !Sub "dt-ticket-numbers-${Stage}"
                     EVENT_BUS_NAME: !Sub "dt-ticket-events-${Stage}"
+                    RATE: "105"
+                    MAX_AMOUNT: "5000"
             Policies:
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketTable
@@ -373,7 +375,6 @@ Resources:
                     EVENT_BUS_NAME: !Sub "dt-ticket-events-${Stage}"
                     SPREADSHEET_ID_PARAM: !Sub "/dt/${Stage}/sheets/spreadsheet-id"
                     SHEET_NAME: Invoice_Spreadsheet
-                    RATE: "105"
                     GOOGLE_SA_SECRET: dt-ticket/google-sa
             Layers:
                 - !Ref GoogleApiLayer

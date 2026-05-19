@@ -14,8 +14,6 @@ const NUMBER_TABLE = process.env.TICKET_NUMBER_TABLE
 const BUCKET = process.env.TICKET_BUCKET
 const BUS = process.env.EVENT_BUS_NAME
 const SHEET_NAME = process.env.SHEET_NAME
-const RATE = Number(process.env.RATE)
-const MAX_AMOUNT = 5000
 const GOOGLE_SA_SECRET = process.env.GOOGLE_SA_SECRET
 
 let sheetsClient = null
@@ -31,7 +29,12 @@ const getSheets = async () => {
   return sheetsClient
 }
 
-const parseTime = (t) => (t ? new Date(`1970-01-01T${t}Z`) : null)
+const formatDate = (s) => {
+  const [yyyy, mm, dd] = s.split("-")
+  return `${Number(mm)}/${Number(dd)}/${yyyy}`
+}
+
+
 
 const formatTime12h = (t) => {
   if (!t) return ""
@@ -42,14 +45,6 @@ const formatTime12h = (t) => {
   const period = h >= 12 ? "PM" : "AM"
   const h12 = h % 12 === 0 ? 12 : h % 12
   return `${h12}:${String(m).padStart(2, "0")} ${period}`
-}
-
-const computeHoursAndAmount = (d) => {
-  const start = parseTime(d.start)
-  const stop = parseTime(d.stop)
-  if (!start || !stop) return { hours: 0, amount: 0 }
-  const hours = Math.round(((stop - start) / (1000 * 60 * 60)) * 4) / 4
-  return { hours, amount: hours * RATE }
 }
 
 export const handler = async (event) => {
@@ -91,7 +86,7 @@ export const handler = async (event) => {
   })
 
   const d = ticket.confirmedData
-  const { hours, amount } = computeHoursAndAmount(d)
+  const { hours, amount, rate } = ticket
 
   const reject = async (msg) => {
     await dynamo.send(
@@ -116,8 +111,6 @@ export const handler = async (event) => {
     console.log("Rejected:", ticketId, msg)
   }
 
-  if (amount > MAX_AMOUNT) return reject(`Amount $${amount} exceeds maximum of $${MAX_AMOUNT}`)
-
   const imageUrl = ticket.validatedKey
     ? `https://${BUCKET}.s3.amazonaws.com/${ticket.validatedKey}`
     : ""
@@ -127,7 +120,7 @@ export const handler = async (event) => {
   const FIRST_DATA_ROW = 3
 
   const row = [
-    d.date,                                                         // A — date
+    formatDate(d.date),                                             // A — date
     d.customerName,                                                 // B — customer
     d.jobName,                                                      // C — job
     imageUrl                                                        // D — ticket #
@@ -135,11 +128,11 @@ export const handler = async (event) => {
       : d.ticketNumber,
     formatTime12h(d.start),                                         // E — start time
     formatTime12h(d.stop),                                          // F — end time
-    hours,                                                          // G — hours
-    amount,                                                         // H — amount
-    "",                                                             // I — invoice #
-    "",                                                             // J — paid
-    RATE,                                                           // K — rate
+    hours,                                                           // G — hours
+    amount,                                                          // H — amount
+    "",                                                              // I — invoice #
+    "",                                                              // J — paid
+    rate,                                                            // K — rate
     d.truckNo,                                                      // L — truck #
     "",                                                             // M — notes
     "",                                                             // N — flags
@@ -160,7 +153,7 @@ export const handler = async (event) => {
       TableName: TABLE,
       Key: { ticketId },
       UpdateExpression:
-        "SET #status = :populated, #ts.#populatedAt = :now, hours = :hours, amount = :amount, rate = :rate, sheetsRow = :row",
+        "SET #status = :populated, #ts.#populatedAt = :now, sheetsRow = :row",
       ConditionExpression: "#status = :populating",
       ExpressionAttributeNames: {
         "#status": "status",
@@ -171,9 +164,6 @@ export const handler = async (event) => {
         ":populated": "populated",
         ":populating": "populating",
         ":now": Date.now(),
-        ":hours": hours,
-        ":amount": amount,
-        ":rate": RATE,
         ":row": nextRow,
       },
     })
