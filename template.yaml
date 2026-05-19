@@ -223,7 +223,7 @@ Resources:
             Layers:
                 - !Ref SharpLayer
             Events:
-                TicketUploaded:
+                TicketUploadedStream:
                     Type: DynamoDB
                     Properties:
                         Stream: !GetAtt TicketTable.StreamArn
@@ -274,7 +274,7 @@ Resources:
                         Action: sqs:SendMessage
                         Resource: !GetAtt TicketTextractDLQ.Arn
             Events:
-                TicketValidated:
+                TicketValidatedStream:
                     Type: DynamoDB
                     Properties:
                         Stream: !GetAtt TicketTable.StreamArn
