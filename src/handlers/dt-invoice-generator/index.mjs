@@ -1,10 +1,9 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
-import { DynamoDBDocumentClient, QueryCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb"
+import { DynamoDBDocumentClient, BatchGetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb"
 import { loadParams } from "../../shared/ssm.mjs"
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}))
 const TABLE = process.env.TICKET_TABLE
-const STATUS_DATE_INDEX = "status-ticketDate-index"
 const APPS_SCRIPT_TIMEOUT_MS = 25000
 
 const callAppsScript = async (url, payload) => {
@@ -42,9 +41,12 @@ export const handler = async (event) => {
     } catch {
         return { statusCode: 400, body: JSON.stringify({ error: "Invalid JSON" }) }
     }
-    const { date } = body
+    const { date, ticketIds } = body
     if (typeof date !== "string" || !/^\d{2}\/\d{2}\/\d{4}$/.test(date)) {
         return { statusCode: 400, body: JSON.stringify({ error: "Invalid date, expected DD/MM/YYYY" }) }
+    }
+    if (!Array.isArray(ticketIds) || ticketIds.length === 0 || ticketIds.some((id) => typeof id !== "string")) {
+        return { statusCode: 400, body: JSON.stringify({ error: "ticketIds must be a non-empty array of strings" }) }
     }
 
     const { APPS_SCRIPT_URL } = await loadParams({
@@ -54,31 +56,26 @@ export const handler = async (event) => {
     let tickets = []
     try {
         const res = await dynamo.send(
-            new QueryCommand({
-                TableName: TABLE,
-                IndexName: STATUS_DATE_INDEX,
-                KeyConditionExpression: "#status = :populated AND #ticketDate = :date",
-                ExpressionAttributeNames: {
-                    "#status": "status",
-                    "#ticketDate": "ticketDate",
-                },
-                ExpressionAttributeValues: {
-                    ":populated": "populated",
-                    ":date": date,
+            new BatchGetCommand({
+                RequestItems: {
+                    [TABLE]: { Keys: ticketIds.map((id) => ({ ticketId: id })) },
                 },
             })
         )
-        if (res.Items) tickets.push(...res.Items)
+        tickets = res.Responses?.[TABLE] ?? []
     } catch (err) {
         console.error(err)
         return { statusCode: 500, body: JSON.stringify({ error: err.message }) }
     }
 
-    if (tickets.length === 0) {
-        return { statusCode: 404, body: JSON.stringify({ error: "No populated tickets for this date" }) }
+    if (tickets.length !== ticketIds.length) {
+        return { statusCode: 404, body: JSON.stringify({ error: "One or more tickets not found" }) }
     }
 
-    const ticketIds = tickets.map((t) => t.ticketId)
+    const wrongDate = tickets.filter((t) => t.ticketDate !== date)
+    if (wrongDate.length > 0) {
+        return { statusCode: 409, body: JSON.stringify({ error: "One or more tickets do not match the requested date" }) }
+    }
 
     try {
         await dynamo.send(
@@ -88,11 +85,12 @@ export const handler = async (event) => {
                         TableName: TABLE,
                         Key: { ticketId },
                         UpdateExpression: "SET #status = :generatingInvoice, timestamps.generatingInvoiceTimestamp = :ts",
-                        ConditionExpression: "#status = :populated",
+                        ConditionExpression: "#status = :populated AND ticketDate = :date",
                         ExpressionAttributeNames: { "#status": "status" },
                         ExpressionAttributeValues: {
                             ":generatingInvoice": "generatingInvoice",
                             ":populated": "populated",
+                            ":date": date,
                             ":ts": new Date().toISOString(),
                         },
                     },
