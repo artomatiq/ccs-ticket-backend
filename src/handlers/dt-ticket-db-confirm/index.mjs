@@ -184,6 +184,13 @@ export const handler = async (event) => {
               },
             },
           },
+          {
+            Put: {
+              TableName: NUMBER_TABLE,
+              Item: { ticketNumber, createdAt: now },
+              ConditionExpression: "attribute_not_exists(ticketNumber)",
+            },
+          },
         ],
       })
     )
