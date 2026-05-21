@@ -17,19 +17,19 @@ flowchart TD
     F -->|presigned URL| G[Client PUT → S3 /raw]
 
     G --> H[dt-ticket-db-writer\nDB: uploaded]
-    H --> I{{EventBridge}}
-    I --> J[dt-ticket-validator\nDB: validating]
+    H --> S1{{DynamoDB Stream\nfilter: status=uploaded}}
+    S1 --> J[dt-ticket-validator\nDB: validated or rejected]
     J -->|pass| K[S3 /validated\nDB: validated]
     J -->|fail| L[S3 /rejected\nDB: rejected]
-    K --> M{{EventBridge}}
-    M --> N[dt-ticket-textract\nDB: extracted]
+    K --> S2{{DynamoDB Stream\nfilter: status=validated}}
+    S2 --> N[dt-ticket-textract\nDB: extracting → extracted]
 
     G --> O["Client polls /tickets/{ticketId}"]
     O -->|status: extracted| P[Review + edit fields in UI]
     P --> Q["POST /tickets/{ticketId}/confirm"]
     Q --> R[dt-ticket-db-confirm\nDB: confirmed]
-    R --> S{{DynamoDB Stream}}
-    S --> pipe[EventBridge Pipe\nfilter: status=confirmed]
+    R --> S3{{DynamoDB Stream\nfilter: status=confirmed}}
+    S3 --> pipe[EventBridge Pipe]
     pipe --> sqs[SQS Queue]
     sqs --> T[dt-sheets-writer\nDB: populated\nSheet row written]
 
@@ -51,15 +51,13 @@ flowchart TD
 stateDiagram-v2
     [*] --> awaiting_upload: dt-ticket-presign
     awaiting_upload --> uploaded: S3 trigger / dt-ticket-db-writer
-    uploaded --> validating: dt-ticket-validator
-    validating --> validated: passes validation
-    validating --> rejected: fails uniqueness check
+    uploaded --> validated: dt-ticket-validator (pass)
+    uploaded --> rejected: dt-ticket-validator (fail)
     validated --> extracting: dt-ticket-textract
     extracting --> extracted: Textract success
     extracting --> failed: Textract failure
     extracted --> confirmed: client confirms
-    confirmed --> populating: dt-sheets-writer
-    populating --> populated: Sheet write success
+    confirmed --> populated: dt-sheets-writer
     populated --> generatingInvoice: dt-invoice-generator
     generatingInvoice --> invoiced: Apps Script success
     generatingInvoice --> populated: Apps Script failure (reverted)
@@ -117,29 +115,22 @@ Client displays the processed image for preview before uploading.
 
 ### S3 Trigger → dt-ticket-db-writer
 - Triggered by new object in S3 `/raw`
-- Fetches ticket record from DB
 - Updates status to `uploaded` only if status === `awaiting-upload`
-- On success: publishes event to EventBridge
 
-### EventBridge → dt-ticket-validator
-- Updates status to `validating` only if status === `uploaded`
-- Sets `validationStartedAt` timestamp (used by `dt-ticket-stage-recovery`)
+### DynamoDB Stream → dt-ticket-validator
+- Triggered by stream record where `status = uploaded` (batch size 1, bisect-on-error, 3 retries, dedicated DLQ)
 - Downloads ticket from S3 `/raw`
-- Verifies `image/jpeg` content type
-- Verifies file size (10 KB – 5 MB)
-- TODO: verify aspect ratio
-- TODO: verify blur index
-- OCRs just the ticket number using Textract
-- Checks ticket number uniqueness against `dt-ticket-number-db` DynamoDB table
-  - If uniqueness check fails: updates status to `rejected` only if status === `validating`
-- TODO: normalize image size
-- Sends PUT to S3 `/validated` or `/rejected`
-- Updates status to `validated` or `rejected` only if status === `validating`
-- On success: publishes `TicketExtractionRequested` event to EventBridge
+- On any failure below, sends PUT to S3 `/rejected` and updates status to `rejected` (condition: `status = uploaded`):
+  - Content type is not `image/jpeg`
+  - File size out of range (10 KB – 5 MB)
+  - Ticket number not detected by Textract
+- OCRs just the ticket number ROI using Textract `DetectDocumentText`
+- TODO: verify aspect ratio, verify blur index, normalize image size
+- On success: writes image to S3 `/validated`, then updates status to `validated` with `validatedKey` and `ticketNumber` (condition: `status = uploaded`)
 
-### EventBridge → dt-ticket-textract
-- Updates status to `extracting` only if status === `validated`
-- Sets `lastUpdated` timestamp (used by `dt-ticket-stage-recovery`)
+### DynamoDB Stream → dt-ticket-textract
+- Triggered by stream record where `status = validated` (batch size 1, bisect-on-error, 3 retries, dedicated DLQ)
+- Updates status to `extracting` only if status === `validated` (atomic claim)
 - Loads ticket from S3 `/validated`
 - Runs Textract
 - Updates extracted data in `ticket-db`
@@ -152,13 +143,14 @@ Client displays the processed image for preview before uploading.
 After the S3 PUT, the client polls `/tickets/{ticketId}`:
 
 - `dt-jwt-authorizer` authorizes the token
-- `dt-ticket-db-reader` Lambda:
-  - Returns error if ticket doesn't exist
-  - Returns error if `driverId` doesn't match requester
-  - Returns current status (drives polling logic on client)
-  - If status === `extracted`, also returns:
-    - Extracted ticket data
-    - Presigned GET URL for S3 `/validated`
+- `dt-ticket-db-reader` Lambda has two modes:
+  - **GET `/tickets/{ticketId}`** (driver or admin):
+    - 404 if ticket doesn't exist
+    - 403 if `userId` doesn't match requester (admin bypasses)
+    - Returns `status`, `statusMessage`
+    - If status === `extracted`, also returns `extractedData` and a presigned GET URL for S3 `/validated`
+  - **GET `/tickets?status=X`** (admin only): queries the `status-ticketDate-index` GSI, returns all tickets with that status (with presigned image URLs)
+  - **GET `/tickets`** (admin only, no status filter): full table scan
 
 ---
 
@@ -170,6 +162,7 @@ After the S3 PUT, the client polls `/tickets/{ticketId}`:
 4. Client sends POST to `/tickets/{ticketId}/confirm`
 5. `dt-jwt-authorizer` authorizes the token
 6. `dt-ticket-db-confirm` Lambda:
+   - GETs the ticket to check ownership and current status (soft guard: returns 409 if not in `extracted`)
    - Validates the submitted `confirmedData`:
      - All required fields present: `ticketNumber`, `date`, `day`, `customerName`, `jobName`, `start`, `stop`, `truckNo`
      - `ticketNumber` matches `^\d{4,10}$`
@@ -182,10 +175,10 @@ After the S3 PUT, the client polls `/tickets/{ticketId}`:
      - `truckNo` must be in fleet; must match the driver's identity (or requester is `ADMIN`)
    - Computes `hours` (quarter-hour rounded) and `amount = hours × rate`
    - Returns 400 if `amount > $5,000`
-   - DynamoDB transaction (atomic):
-     - Updates `ticket-db` status to `confirmed` only if status === `extracted`, sets `confirmedData`, `ticketDate`, `hours`, `amount`, and `rate`
-     - Inserts the ticket number into `ticket-number-db` (condition: `attribute_not_exists`); transaction fails if the number was already filed
-   - The DynamoDB write triggers the stream (no explicit event published)
+   - Single DynamoDB transaction:
+     - Updates `ticket-db` status to `confirmed` (condition: `status = extracted`), sets `confirmedData`, `ticketDate`, `hours`, `amount`, and `rate`
+     - Inserts ticket number into `dt-ticket-number-db` (condition: `attribute_not_exists(ticketNumber)`); 409 if duplicate
+   - The DynamoDB write triggers the stream that drives `dt-sheets-writer` (no explicit event published)
 7. Client polls `/tickets/{ticketId}` until status === `populated`
 
 ---
@@ -194,14 +187,12 @@ After the S3 PUT, the client polls `/tickets/{ticketId}`:
 
 ### DynamoDB Stream → EventBridge Pipe → SQS → dt-sheets-writer
 
-> **Note:** Google Sheets is the business's source of truth. Tickets can be processed manually directly in Sheets. A planned **dt-sheets-sync** lambda will run at the start of the pipeline to sync Sheets → Dynamo so the backend is aware of manually processed tickets.
+> **Note:** Google Sheets is the business's source of truth. Tickets can be processed manually directly in Sheets.
 
-The confirm lambda's DynamoDB write triggers the stream. An EventBridge Pipe filters for `status = confirmed` and routes each record to an SQS queue. The SQS queue triggers `dt-sheets-writer` (batch size 1), with a DLQ for failed messages after 3 attempts.
+The confirm lambda's DynamoDB write triggers the stream. An EventBridge Pipe filters for `status = confirmed` and routes each record to a standard SQS queue (120s visibility timeout). The SQS queue triggers `dt-sheets-writer` (batch size 1), with a DLQ for messages that fail after 3 attempts.
 
-- Updates status to `populating` only if status === `confirmed`
-- Sets `populatingAt` timestamp (used by `dt-ticket-stage-recovery`)
-- Reads pre-computed `hours`, `amount`, and `rate` from the ticket (set at confirm time)
-- Builds the new row in memory using this schema:
+- Fetches ticket from `ticket-db`; discards message if not found
+- Builds the new row in memory using pre-computed `hours`, `amount`, and `rate` (set at confirm time):
 
   | Col | Field         |
   |-----|---------------|
@@ -220,11 +211,8 @@ The confirm lambda's DynamoDB write triggers the stream. An EventBridge Pipe fil
   | M   | Notes (left blank) |
   | N   | Flags (left blank) |
 
-- Appends the row via `sheets.spreadsheets.values.append` (Google atomically picks the next empty row, so no read-then-write race)
-- Parses the assigned row number out of the response's `updates.updatedRange` and persists it as `sheetsRow` on the ticket
-- Updates status to `populated` in `ticket-db` only if status === `populating`
-- Flips `ticket-number-db` row to `populated` (best-effort; skipped if not in `confirmed`)
-- Publishes `TicketPopulated` event
+- Appends the row via `sheets.spreadsheets.values.append` (Google atomically picks the next empty row); on failure the lambda throws and SQS retries
+- Single DynamoDB transaction: updates `ticket-db` status to `populated` (condition: `status = confirmed`) and stamps `status = populated` + `populatedAt` on the `ticket-number-db` record; silently exits if transaction is cancelled (ticket already populated)
 
 ---
 
@@ -233,46 +221,40 @@ The confirm lambda's DynamoDB write triggers the stream. An EventBridge Pipe fil
 ### Admin View
 
 - Admin sends GET to `/tickets?status=populated`
-- `dt-ticket-db-reader` Lambda fetches all tickets with status `populated`
-- Returns `confirmedData`, `confirmedAt`, `driverId`, `validatedKey`, and `status` per ticket
+- `dt-ticket-db-reader` queries the `status-ticketDate-index` GSI and returns all matching tickets (with presigned image URLs)
 - UI shows badge if there are unprocessed tickets
-- Admin groups tickets by earliest date, clicks "Generate Invoice"
+- Admin groups tickets by date and clicks "Generate Invoice", which POSTs `{ date, ticketIds }` to `/invoices`
 
 ### POST /invoices → dt-invoice-generator Lambda
 
-- Fetches all tickets from `ticket-db` with status === `populated` and matching date (using `status-date-index`)
-- Single DynamoDB transaction: updates all matched tickets to `generatingInvoice` only if status === `populated`, stamping `timestamps.generatingInvoiceTimestamp`
-- If any ticket fails the transition, Lambda exits with error (recovery Lambda planned)
-- Calls Google Apps Script endpoint
+- Auth: rejects non-ADMIN
+- Validates body: `date` (DD/MM/YYYY) and non-empty `ticketIds` array
+- `BatchGet` on the provided `ticketIds` to fetch ticket data
+- Soft guards: 404 if any ticket missing, 409 if any `ticketDate` doesn't match the requested date
+- Atomically increments counter in `dt-invoice-counter` table (`ADD #n :one` with `ReturnValues: UPDATED_NEW`); formats result as zero-padded 3-digit string (e.g. `003`)
+- Single DynamoDB transaction: updates all matched tickets to `generatingInvoice`, stamps `timestamps.generatingInvoiceTimestamp` (condition: `status = populated AND ticketDate = date`); 409 on conflict
+- Calls Google Apps Script endpoint (25s timeout) with the ticket data and pre-allocated `invoiceNumber`
 
 ### Apps Script
 
 - Verifies request claims say `ADMIN`
-- Fetches `sheetsRow` for each ticket
-- Reads those rows from the Google Sheet
-- Compares each field from Dynamo against Sheets to confirm they match
-- Finds the lowest row number among the tickets and calculates the new invoice number by incrementing the previous one
+- Receives `invoiceNumber`, ticket data (`ticketId`, `confirmedData`, `hours`, `amount`), and `date` from the Lambda
 - Feeds rows, invoice number, total hours, and total amount into an HTML template
-- Generates a PDF and uploads to Google Drive
-- Writes the new invoice number into the Sheet for those rows and links the PDF URL
-- Returns success to Lambda with the PDF URL and invoice number
-
-### Invoice PDF Fetch
-
-`InvoicePdfFetch` Lambda proxies a Google Drive PDF by `fileId` (query or path parameter), returning the raw bytes base64-encoded with `Content-Type: application/pdf` and a 5-minute private cache header. Used by the admin UI to display invoice PDFs without exposing Drive credentials to the client.
+- Generates a PDF and uploads it to S3
+- Writes the invoice number and PDF URL into the matching Sheet rows
+- Returns `{ invoiceId, pdfUrl }` to the Lambda
 
 ### dt-invoice-generator Lambda (continued)
 
-- Receives PDF URL and invoice ID from Apps Script
-- If Apps Script fails: reverts each ticket's status back to `populated` and records `lastInvoiceFailureReason` (condition: status === `generatingInvoice`)
-- On success: transactionally updates each ticket to status === `invoiced`, sets `invoiceId` and `invoicePdfUrl` (condition: status === `generatingInvoice`). If this final update fails after Apps Script already produced the PDF, tickets stay in `generatingInvoice` and require manual reconciliation (logged for tracing)
-- Returns success to client with the PDF URL
+- If Apps Script fails: transactionally reverts each ticket back to `populated` and records `lastInvoiceFailureReason` (condition: `status = generatingInvoice`); the consumed invoice number is left as a gap in the sequence
+- On success: transactionally updates each ticket to `invoiced`, sets `invoiceId` and `invoicePdfUrl` (condition: `status = generatingInvoice`)
+- If the final write fails after Apps Script succeeded: tickets stay in `generatingInvoice` and are logged for manual reconciliation; the response still returns 200 with the PDF URL since the invoice was generated
+- Returns `{ invoiceId, pdfUrl, date, ticketIds }` to the client
 
 ---
 
 ## Planned Handlers (stubs)
 
-The following handler folders exist but are not yet implemented:
+The following handler folder exists but is not yet implemented:
 
-- **`TicketSheetsSync`** — will sync Sheets → Dynamo so tickets processed manually in the sheet are visible to the backend (referenced in [Google Sheets Population](#google-sheets-population)).
-- **`TicketStageRecovery`** — will scan for tickets stuck in transient states (`validating`, `extracting`, `populating`, `generatingInvoice`) past their `*At` timestamp and either retry or mark them failed.
+- **`TicketStageRecovery`** — will run on a CloudWatch schedule (e.g. every 5 minutes), scan for tickets stuck in transient states (`extracting`, `populating`, `generatingInvoice`) past their `*At` timestamp, and either retry or mark them failed. Required because in-lambda retries can't recover from process crashes, timeouts, or any failure between the atomic claim and the next durable write.
