@@ -9,7 +9,6 @@ const s3 = new S3Client({})
 const textract = new TextractClient({})
 
 const TABLE = process.env.TICKET_TABLE
-const NUMBER_TABLE = process.env.TICKET_NUMBER_TABLE
 const BUCKET = process.env.TICKET_BUCKET
 
 const MIN_SIZE = 10_000
@@ -140,27 +139,6 @@ export const handler = async (event) => {
       ContentType: "image/jpeg",
     })
   )
-
-  try {
-    await dynamo.send(
-      new UpdateCommand({
-        TableName: NUMBER_TABLE,
-        Key: { ticketNumber },
-        UpdateExpression: "SET createdAt = :now",
-        ConditionExpression: "attribute_not_exists(ticketNumber)",
-        ExpressionAttributeValues: {
-          ":now": Date.now(),
-        },
-      })
-    )
-  } catch (err) {
-    if (err.name === "ConditionalCheckFailedException") {
-      return reject(`Ticket ${ticketNumber} already filed`, imgBuffer)
-    }
-    throw err
-  }
-
-
 
   await dynamo.send(
     new UpdateCommand({
