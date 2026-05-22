@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCS DT Invoice</title>
+    <!-- <link rel="stylesheet" href="index.css"> -->
+    <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet">
+    <style>
+        * {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
+        @page {
+            size: 8.5in 11in;
+            margin: 0.5in;
+            margin: 0;
+        }
+
+        @media print {
+
+            html,
+            body {
+                background: white !important;
+            }
+
+            body * {
+                visibility: hidden;
+            }
+
+            .page,
+            .page * {
+                visibility: visible;
+            }
+
+            .page {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+            }
+        }
+
+        body {
+            background: #e5e5e5;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .page {
+            width: 8.5in;
+            height: 11in;
+            background: white;
+            margin: 0 auto;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+            box-sizing: border-box;
+            padding: 0.5in;
+            display: flex;
+            flex-direction: column;
+            font-family: "Montserrat", sans-serif;
+            color: rgb(83, 83, 83);
+        }
+
+        /* SECTION 1 */
+        .section-1 {
+            flex: 3;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+            padding: 3rem;
+        }
+
+        .section-1 .section-1-container {
+            width: 100%;
+            display: flex;
+            flex-direction: row;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .section-1 .company-name {
+            flex: 5;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            font-size: 30px;
+            color: #63adf6;
+            font-family: Arial, Helvetica, sans-serif;
+            font-style: italic;
+            font-weight: bolder;
+            line-height: 37px;
+        }
+
+        .section-1 .logo {
+            flex: 3;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+        }
+
+        .section-1 .logo img {
+            width: 10rem;
+            height: auto;
+            display: block;
+            max-width: 100%;
+        }
+
+        .section-1 .invoice-summary {
+            flex: 5;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: flex-end;
+        }
+
+        .section-1 .invoice-summary .invoice {
+            font-size: 30px;
+            font-weight: 700;
+            color: black;
+        }
+
+        .section-1 .invoice-summary .invoice-number {
+            font-weight: 700;
+            letter-spacing: 0.75px;
+            color: black;
+            font-size: 20px;
+            margin-top: 5px;
+        }
+
+        .section-1 .invoice-summary .date {
+            font-weight: 200;
+            margin-top: 1.5rem;
+            font-size: 18px;
+        }
+
+        /* SECTION 2 */
+        .section-2 {
+            flex: 1;
+            display: flex;
+            flex-direction: row;
+            justify-content: space-between;
+            align-items: center;
+            padding-left: 1.5rem;
+            padding-right: 1.5rem;
+            padding-top: 75px;
+            margin-top: auto;
+        }
+
+        .section-2 .contact-info {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-evenly;
+            align-items: flex-start;
+            height: 100%;
+            font-size: 14px;
+        }
+
+        .section-2 .contact-info .phone-wrapper,
+        .section-2 .contact-info .email-wrapper,
+        .section-2 .contact-info .address-wrapper {
+            display: flex;
+        }
+
+        .section-2 .contact-info .icon {
+            padding-right: 1rem;
+        }
+
+        .section-2 .bill-to-info {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            text-align: right;
+        }
+
+        .section-2 .bill-to-info .title {
+            font-size: 16px;
+            font-weight: bold;
+            color: black;
+        }
+
+        .section-2 .bill-to-info .company {
+            margin-top: 1rem;
+            margin-bottom: 0.8rem;
+            font-size: 14px;
+        }
+
+        .section-2 .bill-to-info .address {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-evenly;
+            align-items: flex-end;
+            font-size: 12px;
+            line-height: 22px;
+        }
+
+        .section-2 .deliver-to-info {
+            text-align: right;
+        }
+
+        .section-2 .deliver-to-info .title {
+            font-size: 16px;
+            font-weight: bold;
+            color: black;
+        }
+
+        .section-2 .deliver-to-info .company {
+            margin-top: 1rem;
+            margin-bottom: 0.8rem;
+            font-size: 14px;
+        }
+
+        .section-2 .deliver-to-info .address {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-evenly;
+            align-items: flex-end;
+            font-size: 12px;
+            line-height: 22px;
+        }
+
+        /* SECTION 3 */
+        .section-3 {
+            flex: 4;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding-top: 50px;
+            margin-top: auto;
+            padding-bottom: 30px;
+            margin-bottom: auto;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        .section-3 table {
+            width: 90%;
+            text-align: center;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        .section-3 table th {
+            font-weight: 600;
+            color: black;
+            padding: 8px;
+            border: 1px solid rgb(174, 174, 174);
+            font-size: 15px;
+            background-color: rgb(206, 206, 206);
+        }
+
+        .section-3 table td {
+            border: 1px solid rgb(174, 174, 174);
+            padding: 10px;
+            font-size: 12px;
+        }
+
+        .section-3 table .totals-row td:nth-child(-n + 5) {
+            border: none;
+        }
+
+        .section-3 table .total-rate,
+        .section-3 table .total-hours,
+        .section-3 table .total-amount {
+            font-size: 15px;
+            font-weight: 600;
+            background-color: rgb(206, 206, 206);
+        }
+
+        /* SECTION 4 */
+        .section-4 {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: flex-start;
+            padding-left: 1.5rem;
+        }
+
+        .section-4 .position {
+            margin-top: 8px;
+            font-size: 12px;
+        }
+
+        .section-4 .signature {
+            align-self: center;
+            position: absolute;
+            margin-top: 2rem;
+            margin-right: 10rem;
+        }
+
+        .section-4 .signature img {
+            width: 15rem;
+        }
+
+        /* SECTION 5 */
+        .section-5 {
+            flex: 2;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-self: center;
+        }
+
+        .section-5 .website {
+            margin-top: 3rem;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="page">
+
+        <div class="section section-1">
+            <div class="section-1-container">
+                <div class="company-name">
+                    <div class="carolinas">CAROLINAS</div>
+                    <div class="courier">COURIER</div>
+                    <div class="services">SERVICES</div>
+                </div>
+                <div class="logo">
+                    <img src="<?= logo ?>" />
+                </div>
+                <div class="invoice-summary">
+                    <div class="invoice">INVOICE</div>
+                    <div class="invoice-number"><?= invoiceNumber ?></div>
+                    <div class="date"><?= invoiceDate ?></div>
+                </div>
+            </div>
+        </div>
+
+
+
+        <div class="section section-2">
+            <div class="contact-info">
+                <div class="phone-wrapper">
+                    <div class="phone icon">
+                        <i class='bx bxs-phone'></i>
+                    </div>
+                    <div class="phone-text">
+                        +1 704.989.0842
+                    </div>
+                </div>
+                <div class="email-wrapper">
+                    <div class="email icon">
+                        <i class='bx bxs-envelope'></i>
+                    </div>
+                    <div class="email-text">
+                        contact@ccsexpedited.com
+                    </div>
+                </div>
+                <div class="address-wrapper">
+                    <div class="address icon">
+                        <i class='bx bxs-map'></i>
+                    </div>
+                    <div class="address-text">
+                        Mint Hill, NC
+                    </div>
+                </div>
+            </div>
+
+            <div class="bill-to-info">
+                <div class="title">Bill to:</div>
+                <div class="company">Daniel's Mobile Service</div>
+                <div class="address">
+                    <span class="street">2709 Lawyers Road</span>
+                    <span class="city-state">Indian Trail, NC 28079</span>
+                </div>
+            </div>
+
+            <div class="deliver-to-info">
+                <div class="title">Deliver to:</div>
+                <div class="company">Daniel's Mobile Service</div>
+                <div class="address">
+                    <span class="street">2709 Lawyers Road</span>
+                    <span class="city-state">Indian Trail, NC 28079</span>
+                </div>
+            </div>
+        </div>
+
+
+
+        <div class="section section-3">
+            <table class="invoice-table">
+                <colgroup>
+                    <col style="width: 13%">
+                    <col style="width: 10%">
+                    <col style="width: 10%">
+                    <col>
+                    <col>
+                    <col style="width: 10%">
+                    <col style="width: 9%">
+                    <col style="width: 15%">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Truck</th>
+                        <th>Ticket</th>
+                        <th>Customer</th>
+                        <th>Job</th>
+                        <th>Rate</th>
+                        <th>Hours</th>
+                        <th>Amount</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    <?!= rowsHtml ?>
+                    <!-- <tr>
+                        <td>04/15/2026</td>
+                        <td>145783</td>
+                        <td>Cardinal Engineering</td>
+                        <td>Pawcreek Town Homes</td>
+                        <td>$ 105</td>
+                        <td>7.75</td>
+                        <td>$ 1,345.00</td>
+                    </tr>
+                    <tr>
+                        <td>04/15/2026</td>
+                        <td>145783</td>
+                        <td>Cardinal Engineering</td>
+                        <td>Pawcreek Town Homes</td>
+                        <td>$ 105</td>
+                        <td>7.75</td>
+                        <td>$ 1,345.00</td>
+                    </tr>
+                    <tr>
+                        <td>04/15/2026</td>
+                        <td>145783</td>
+                        <td>Cardinal Engineering</td>
+                        <td>Pawcreek Town Homes</td>
+                        <td>$ 105</td>
+                        <td>7.75</td>
+                        <td>$ 1,345.00</td>
+                    </tr> -->
+                    <tr class="totals-row">
+                        <td class="total-date"></td>
+                        <td class="total-truckNo"></td>
+                        <td class="total-ticket"></td>
+                        <td class="total-customer"></td>
+                        <td class="total-job"></td>
+                        <td class="total-rate">Total:</td>
+                        <td class="total-hours"><?= totalHours ?></td>
+                        <td class="total-amount"><?= totalAmount ?></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+
+
+        <div class="section section-4">
+            <span class="name">Art Vardanyan</span>
+            <span class="position">Executive Administrator</span>
+            <div class="signature">
+                <img src="<?= signature ?>" />
+            </div>
+        </div>
+
+        <div class="section section-5">
+            <div class="website">
+                www.carolinascourier.com
+            </div>
+        </div>
+
+    </div>
+
+
+
+</body>
+
+</html>
