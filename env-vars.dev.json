@@ -46,6 +46,7 @@
   },
   "InvoiceGenerator": {
     "TICKET_TABLE": "dt-tickets-dev",
-    "APPS_SCRIPT_URL_PARAM": "/dt/dev/apps-script-url"
+    "APPS_SCRIPT_URL_PARAM": "/dt/dev/apps-script-url",
+    "ADMIN_SECRET_PARAM": "/dt/dev/admin-secret"
   }
 }
