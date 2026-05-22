@@ -13,17 +13,16 @@
     "TICKET_BUCKET": "dt-ticket-images-dev-247570646250"
   },
   "TicketDbWriter": {
-    "TICKET_TABLE": "dt-tickets-dev",
-    "EVENT_BUS_NAME": "dt-ticket-events-dev"
+    "TICKET_TABLE": "dt-tickets-dev"
   },
   "TicketValidator": {
     "TICKET_TABLE": "dt-tickets-dev",
     "TICKET_NUMBER_TABLE": "dt-ticket-numbers-dev",
-    "TICKET_BUCKET": "dt-ticket-images-dev-247570646250",
-    "EVENT_BUS_NAME": "dt-ticket-events-dev"
+    "TICKET_BUCKET": "dt-ticket-images-dev-247570646250"
   },
   "TicketTextract": {
-    "TICKET_TABLE": "dt-tickets-dev"
+    "TICKET_TABLE": "dt-tickets-dev",
+    "TICKET_BUCKET": "dt-ticket-images-dev-247570646250"
   },
   "TicketDbReader": {
     "TICKET_TABLE": "dt-tickets-dev",
@@ -32,13 +31,13 @@
   "TicketDbConfirm": {
     "TICKET_TABLE": "dt-tickets-dev",
     "TICKET_NUMBER_TABLE": "dt-ticket-numbers-dev",
-    "EVENT_BUS_NAME": "dt-ticket-events-dev"
+    "RATE": "105",
+    "MAX_AMOUNT": "5000"
   },
   "SheetsWriter": {
     "TICKET_TABLE": "dt-tickets-dev",
     "TICKET_NUMBER_TABLE": "dt-ticket-numbers-dev",
     "TICKET_BUCKET": "dt-ticket-images-dev-247570646250",
-    "EVENT_BUS_NAME": "dt-ticket-events-dev",
     "SPREADSHEET_ID_PARAM": "/dt/dev/sheets/spreadsheet-id",
     "SHEET_NAME": "Invoice_Spreadsheet",
     "RATE": "105",
