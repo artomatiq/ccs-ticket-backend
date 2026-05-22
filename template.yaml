@@ -427,19 +427,18 @@ Resources:
             Environment:
                 Variables:
                     TICKET_TABLE: !Sub "dt-tickets-${Stage}"
-                    INVOICE_COUNTER_TABLE: !Sub "dt-invoice-counter-${Stage}"
                     APPS_SCRIPT_URL_PARAM: !Sub "/dt/${Stage}/apps-script-url"
+                    ADMIN_SECRET_PARAM: !Sub "/dt/${Stage}/admin-secret"
             Policies:
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketTable
-                - DynamoDBCrudPolicy:
-                      TableName: !Ref InvoiceCounterTable
                 - Statement:
                       - Effect: Allow
                         Action:
                             - ssm:GetParameters
                         Resource:
                             - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/${Stage}/apps-script-url
+                            - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/${Stage}/admin-secret
                       - Effect: Allow
                         Action:
                             - kms:Decrypt
