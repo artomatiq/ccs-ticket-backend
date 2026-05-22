@@ -38,8 +38,8 @@ flowchart TD
 
     V --> W[Admin: GET /tickets?status=populated]
     W --> X[POST /invoices]
-    X --> Y[dt-invoice-generator Lambda\nDB: generatingInvoice]
-    Y --> Z[Google Apps Script\nPDF generated · uploaded to Drive]
+    X --> Y[dt-invoice-generator Lambda]
+    Y --> Z[Google Apps Script\nvalidates · deduplicates · generates PDF\nuploads to Drive · links in sheet]
     Z --> AA([DB: invoiced · PDF URL returned])
 ```
 
@@ -58,9 +58,7 @@ stateDiagram-v2
     extracting --> failed: Textract failure
     extracted --> confirmed: client confirms
     confirmed --> populated: dt-sheets-writer
-    populated --> generatingInvoice: dt-invoice-generator
-    generatingInvoice --> invoiced: Apps Script success
-    generatingInvoice --> populated: Apps Script failure (reverted)
+    populated --> invoiced: dt-invoice-generator + Apps Script
     invoiced --> [*]
     rejected --> [*]
     failed --> [*]
@@ -227,29 +225,32 @@ The confirm lambda's DynamoDB write triggers the stream. An EventBridge Pipe fil
 
 ### POST /invoices → dt-invoice-generator Lambda
 
-- Auth: rejects non-ADMIN
-- Validates body: `date` (DD/MM/YYYY) and non-empty `ticketIds` array
+- Auth: JWT authorizer + lambda rejects non-ADMIN claims
+- Validates body: `date` (YYYY-MM-DD) and non-empty `ticketIds` array
 - `BatchGet` on the provided `ticketIds` to fetch ticket data
 - Soft guards: 404 if any ticket missing, 409 if any `ticketDate` doesn't match the requested date
-- Atomically increments counter in `dt-invoice-counter` table (`ADD #n :one` with `ReturnValues: UPDATED_NEW`); formats result as zero-padded 3-digit string (e.g. `003`)
-- Single DynamoDB transaction: updates all matched tickets to `generatingInvoice`, stamps `timestamps.generatingInvoiceTimestamp` (condition: `status = populated AND ticketDate = date`); 409 on conflict
-- Calls Google Apps Script endpoint (25s timeout) with the ticket data and pre-allocated `invoiceNumber`
+- Converts `date` to `M/D/YYYY` sheet format and calls Google Apps Script (25s timeout), forwarding ticket fields (`truckNo`, `ticketNumber`, `customerName`, `jobName`, `rate`, `hours`, `amount`) and a shared secret fetched from SSM
 
-### Apps Script
+### Apps Script (`doPost.js`)
 
-- Verifies request claims say `ADMIN`
-- Receives `invoiceNumber`, ticket data (`ticketId`, `confirmedData`, `hours`, `amount`), and `date` from the Lambda
-- Feeds rows, invoice number, total hours, and total amount into an HTML template
-- Generates a PDF and uploads it to S3
-- Writes the invoice number and PDF URL into the matching Sheet rows
-- Returns `{ invoiceId, pdfUrl }` to the Lambda
+- Acquires a script-level lock (`LockService.waitLock(10s)`); returns 503 if busy
+- Verifies shared secret against Script Property `ADMIN_SECRET`
+- Fetches all rows from `Invoice_Spreadsheet` matching the requested date
+- **Duplicate detection**: groups rows by ticket number; for each duplicate group, finds the row that matches all request fields; marks non-matching rows as `duplicate` in red in the Notes column; errors if no matching row exists
+- **Validation**: for each canonical row, checks `truckNo`, `ticketNumber`, `customer`, `job`, `rate`, `hours`, `amount` against the request data; errors with field-level diff on mismatch
+- **Idempotency**: if all canonical rows already have the same invoice number, returns `{ alreadyProcessed: true, invoiceId, pdfUrl }` without regenerating
+- **Invoice number**: scans the entire Invoice # column, finds the max `YYDT###` value for the current year, increments by 1 (first of the year starts at `YYDT000`)
+- Generates PDF via the `Invoice_Template` sheet (`pdfGenerator.js`), uploads to Google Drive
+- Writes `=HYPERLINK(pdfUrl, invoiceId)` into the Invoice # column for each canonical row; if this write fails, cleans up the uploaded Drive file
+- Returns `{ ok: true, invoiceId, pdfUrl, alreadyProcessed?, messages[] }` to the Lambda
 
 ### dt-invoice-generator Lambda (continued)
 
-- If Apps Script fails: transactionally reverts each ticket back to `populated` and records `lastInvoiceFailureReason` (condition: `status = generatingInvoice`); the consumed invoice number is left as a gap in the sequence
-- On success: transactionally updates each ticket to `invoiced`, sets `invoiceId` and `invoicePdfUrl` (condition: `status = generatingInvoice`)
-- If the final write fails after Apps Script succeeded: tickets stay in `generatingInvoice` and are logged for manual reconciliation; the response still returns 200 with the PDF URL since the invoice was generated
-- Returns `{ invoiceId, pdfUrl, date, ticketIds }` to the client
+- Logs `"Sheet write succeeded"` once Apps Script returns successfully
+- If `alreadyProcessed`: returns 200 immediately without touching DynamoDB
+- On success: transactionally updates each ticket to `invoiced`, sets `invoiceId` and `invoicePdfUrl` (condition: `status = populated`)
+- If the DynamoDB update fails after the sheet was already written: logs for manual reconciliation and returns 200 with a `warning` field — the invoice PDF exists and the URL is returned so the admin can save it
+- Returns `{ invoiceId, pdfUrl, date, ticketIds, messages }` to the client
 
 ---
 
@@ -257,4 +258,4 @@ The confirm lambda's DynamoDB write triggers the stream. An EventBridge Pipe fil
 
 The following handler folder exists but is not yet implemented:
 
-- **`TicketStageRecovery`** — will run on a CloudWatch schedule (e.g. every 5 minutes), scan for tickets stuck in transient states (`extracting`, `populating`, `generatingInvoice`) past their `*At` timestamp, and either retry or mark them failed. Required because in-lambda retries can't recover from process crashes, timeouts, or any failure between the atomic claim and the next durable write.
+- **`TicketStageRecovery`** — will run on a CloudWatch schedule (e.g. every 5 minutes), scan for tickets stuck in transient states (`extracting`, `populating`) past their `*At` timestamp, and either retry or mark them failed. Required because in-lambda retries can't recover from process crashes, timeouts, or any failure between the atomic claim and the next durable write.
