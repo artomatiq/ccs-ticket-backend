@@ -498,24 +498,6 @@ Resources:
             StreamSpecification:
                 StreamViewType: NEW_IMAGE
 
-    InvoiceCounterTable:
-        Type: AWS::DynamoDB::Table
-        DeletionPolicy: Retain
-        UpdateReplacePolicy: Retain
-        Properties:
-            TableName: !Sub "dt-invoice-counter-${Stage}"
-            BillingMode: PAY_PER_REQUEST
-            SSESpecification:
-                SSEEnabled: true
-            AttributeDefinitions:
-                - AttributeName: pk
-                  AttributeType: S
-            KeySchema:
-                - AttributeName: pk
-                  KeyType: HASH
-            PointInTimeRecoverySpecification:
-                PointInTimeRecoveryEnabled: true
-
     TicketNumberTable:
         Type: AWS::DynamoDB::Table
         DeletionPolicy: Retain
