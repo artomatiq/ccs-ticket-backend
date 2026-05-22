@@ -6,16 +6,25 @@
 # → reports the final state.
 #
 # Usage:
-#   ./scripts/test-pipeline.sh <api-url> [stage] [fixture-path] [passcode] [admin-passcode]
+#   ./scripts/test-pipeline.sh [api-url] [stage] [fixture-path] [passcode] [admin-passcode]
 #
-# Defaults: stage=dev, fixture=first .jpg/.jpeg in fixtures/, passcode=vv01, admin-passcode=admin
+# Defaults: api-url=auto-fetched from CloudFormation, stage=dev, fixture=first .jpg/.jpeg in fixtures/, passcode=vv01, admin-passcode=admin
 # Override passcodes via env (preferred for prod):
 #   SMOKE_PASSCODE='realprodpass' ADMIN_PASSCODE='realadminpass' ./scripts/test-pipeline.sh https://prod.example.com prod
 
 set -euo pipefail
 
-API="${1:?Usage: $0 <api-url> [stage] [fixture-path] [passcode] [admin-passcode]}"
 STAGE="${2:-dev}"
+
+if [[ -n "${1:-}" ]]; then
+  API="$1"
+else
+  API=$(aws cloudformation describe-stacks --stack-name "dt-backend-${STAGE}" \
+    --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' \
+    --output text 2>/dev/null)
+  [[ -z "$API" ]] && { echo "✗ Could not resolve API URL from CloudFormation stack dt-backend-${STAGE}" >&2; exit 1; }
+  echo "→ Resolved API URL from CloudFormation: $API"
+fi
 FIXTURE="${3:-$(find fixtures -maxdepth 1 -type f \( -name '*.jpg' -o -name '*.jpeg' \) 2>/dev/null | head -1)}"
 PW="${4:-${SMOKE_PASSCODE:-vv01}}"
 ADMIN_PW="${5:-${ADMIN_PASSCODE:-admin}}"
