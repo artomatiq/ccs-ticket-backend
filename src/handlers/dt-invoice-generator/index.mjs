@@ -113,6 +113,32 @@ export const handler = async (event) => {
     console.log("Sheet write succeeded", { date, ticketIds, invoiceId, pdfUrl })
 
     if (alreadyProcessed) {
+        try {
+            await dynamo.send(
+                new TransactWriteCommand({
+                    TransactItems: ticketIds.map((ticketId) => ({
+                        Update: {
+                            TableName: TABLE,
+                            Key: { ticketId },
+                            UpdateExpression: "SET #status = :invoiced, invoiceId = :id, invoicePdfUrl = :url, timestamps.invoicedTimestamp = :now",
+                            ConditionExpression: "#status = :populated",
+                            ExpressionAttributeNames: { "#status": "status" },
+                            ExpressionAttributeValues: {
+                                ":invoiced": "invoiced",
+                                ":populated": "populated",
+                                ":id": invoiceId,
+                                ":url": pdfUrl,
+                                ":now": new Date().toISOString(),
+                            },
+                        },
+                    })),
+                })
+            )
+        } catch (err) {
+            if (!err.name?.includes("TransactionCanceledException")) {
+                console.error("Unexpected error updating DynamoDB on alreadyProcessed path", { err: err.message })
+            }
+        }
         return {
             statusCode: 200,
             body: JSON.stringify({ message: "Invoice already processed.", date, ticketIds, invoiceId, pdfUrl, messages }),
