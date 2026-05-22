@@ -41,17 +41,20 @@ export const handler = async (event) => {
     } catch {
         return { statusCode: 400, body: JSON.stringify({ error: "Invalid JSON" }) }
     }
+
     const { date, ticketIds } = body
-    if (typeof date !== "string" || !/^\d{2}\/\d{2}\/\d{4}$/.test(date)) {
-        return { statusCode: 400, body: JSON.stringify({ error: "Invalid date, expected DD/MM/YYYY" }) }
+
+    const { APPS_SCRIPT_URL, ADMIN_SECRET } = await loadParams({
+        APPS_SCRIPT_URL: process.env.APPS_SCRIPT_URL_PARAM,
+        ADMIN_SECRET: process.env.ADMIN_SECRET_PARAM,
+    })
+
+    if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return { statusCode: 400, body: JSON.stringify({ error: "Invalid date, expected YYYY-MM-DD" }) }
     }
     if (!Array.isArray(ticketIds) || ticketIds.length === 0 || ticketIds.some((id) => typeof id !== "string")) {
         return { statusCode: 400, body: JSON.stringify({ error: "ticketIds must be a non-empty array of strings" }) }
     }
-
-    const { APPS_SCRIPT_URL } = await loadParams({
-        APPS_SCRIPT_URL: process.env.APPS_SCRIPT_URL_PARAM,
-    })
 
     let tickets = []
     try {
@@ -77,83 +80,43 @@ export const handler = async (event) => {
         return { statusCode: 409, body: JSON.stringify({ error: "One or more tickets do not match the requested date" }) }
     }
 
+    let invoiceId, pdfUrl, alreadyProcessed, messages
     try {
-        await dynamo.send(
-            new TransactWriteCommand({
-                TransactItems: ticketIds.map((ticketId) => ({
-                    Update: {
-                        TableName: TABLE,
-                        Key: { ticketId },
-                        UpdateExpression: "SET #status = :generatingInvoice, timestamps.generatingInvoiceTimestamp = :ts",
-                        ConditionExpression: "#status = :populated AND ticketDate = :date",
-                        ExpressionAttributeNames: { "#status": "status" },
-                        ExpressionAttributeValues: {
-                            ":generatingInvoice": "generatingInvoice",
-                            ":populated": "populated",
-                            ":date": date,
-                            ":ts": new Date().toISOString(),
-                        },
-                    },
-                })),
-            })
-        )
-    } catch (err) {
-        if (err.name === "TransactionCanceledException") {
-            return {
-                statusCode: 409,
-                body: JSON.stringify({
-                    error: "One or more tickets are already being invoiced or not in 'populated' state. Refresh and retry.",
-                }),
-            }
-        }
-        console.error(err)
-        return { statusCode: 500, body: JSON.stringify({ error: err.message }) }
-    }
-
-    let invoiceId, pdfUrl
-    try {
+        const [y, m, d] = date.split("-")
+        const sheetDate = `${Number(m)}/${Number(d)}/${y}`
         const result = await callAppsScript(APPS_SCRIPT_URL, {
-            user: "ADMIN",
-            date,
+            secret: ADMIN_SECRET,
+            date: sheetDate,
             tickets: tickets.map((t) => ({
                 ticketId: t.ticketId,
-                sheetsRow: t.sheetsRow,
-                confirmedData: t.confirmedData,
+                truckNo: t.confirmedData?.truckNo,
+                ticketNumber: t.confirmedData?.ticketNumber,
+                customerName: t.confirmedData?.customerName,
+                jobName: t.confirmedData?.jobName,
+                rate: t.rate,
                 hours: t.hours,
                 amount: t.amount,
             })),
         })
         invoiceId = result.invoiceId
         pdfUrl = result.pdfUrl
+        alreadyProcessed = result.alreadyProcessed ?? false
+        messages = result.messages ?? []
         if (!invoiceId || !pdfUrl) {
             throw new Error(`apps_script_missing_fields: ${JSON.stringify(result).slice(0, 500)}`)
         }
     } catch (err) {
         console.error(err)
-        try {
-            await dynamo.send(
-                new TransactWriteCommand({
-                    TransactItems: ticketIds.map((ticketId) => ({
-                        Update: {
-                            TableName: TABLE,
-                            Key: { ticketId },
-                            UpdateExpression: "SET #status = :populated, lastInvoiceFailureReason = :reason, timestamps.invoiceFailureTimestamp = :now REMOVE timestamps.generatingInvoiceTimestamp",
-                            ConditionExpression: "#status = :generatingInvoice",
-                            ExpressionAttributeNames: { "#status": "status" },
-                            ExpressionAttributeValues: {
-                                ":populated": "populated",
-                                ":generatingInvoice": "generatingInvoice",
-                                ":reason": err.message.slice(0, 200),
-                                ":now": new Date().toISOString(),
-                            },
-                        },
-                    })),
-                })
-            )
-        } catch (revertErr) {
-            console.error("Revert failed", revertErr)
-        }
         return { statusCode: 502, body: JSON.stringify({ error: err.message }) }
+    }
+
+    console.log("Sheet write succeeded", { date, ticketIds, invoiceId, pdfUrl })
+
+    if (alreadyProcessed) {
+        return {
+            statusCode: 200,
+            body: JSON.stringify({ message: "Invoice already processed.", date, ticketIds, invoiceId, pdfUrl, messages }),
+        }
     }
 
     try {
@@ -164,11 +127,11 @@ export const handler = async (event) => {
                         TableName: TABLE,
                         Key: { ticketId },
                         UpdateExpression: "SET #status = :invoiced, invoiceId = :id, invoicePdfUrl = :url, timestamps.invoicedTimestamp = :now",
-                        ConditionExpression: "#status = :generatingInvoice",
+                        ConditionExpression: "#status = :populated",
                         ExpressionAttributeNames: { "#status": "status" },
                         ExpressionAttributeValues: {
                             ":invoiced": "invoiced",
-                            ":generatingInvoice": "generatingInvoice",
+                            ":populated": "populated",
                             ":id": invoiceId,
                             ":url": pdfUrl,
                             ":now": new Date().toISOString(),
@@ -178,15 +141,22 @@ export const handler = async (event) => {
             })
         )
     } catch (err) {
-        // Apps Script already produced the PDF; ticket status is stuck at generatingInvoice.
-        // Manual reconciliation needed — log enough to trace it.
-        console.error("Final status update failed, manual reconciliation required", {
+        // Sheet already updated; invoice PDF exists. Manual reconciliation needed.
+        console.error("DynamoDB update failed after sheet write succeeded — manual reconciliation required", {
             date, ticketIds, invoiceId, pdfUrl, err: err.message,
         })
+        return {
+            statusCode: 200,
+            body: JSON.stringify({
+                message: "Invoice generated. Ticket status update failed — update statuses manually.",
+                date, ticketIds, invoiceId, pdfUrl, messages,
+                warning: err.message,
+            }),
+        }
     }
 
     return {
         statusCode: 200,
-        body: JSON.stringify({ message: "Invoice generated.", date, ticketIds, invoiceId, pdfUrl }),
+        body: JSON.stringify({ message: "Invoice generated.", date, ticketIds, invoiceId, pdfUrl, messages }),
     }
 }
