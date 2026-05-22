@@ -2,21 +2,23 @@
 # End-to-end pipeline test using a real ticket fixture.
 # Mints a ticket → uploads the fixture → polls for the chain to settle
 # (presign → S3 → db-writer → validator → textract) → confirms the
-# extracted ticket → reports the final state.
+# extracted ticket → waits for sheets-writer → generates invoice as admin
+# → reports the final state.
 #
 # Usage:
-#   ./scripts/test-pipeline.sh <api-url> [stage] [fixture-path] [passcode]
+#   ./scripts/test-pipeline.sh <api-url> [stage] [fixture-path] [passcode] [admin-passcode]
 #
-# Defaults: stage=dev, fixture=first .jpg/.jpeg in fixtures/, passcode=vv01
-# Override passcode via env (preferred for prod):
-#   SMOKE_PASSCODE='realprodpass' ./scripts/test-pipeline.sh https://prod.example.com prod
+# Defaults: stage=dev, fixture=first .jpg/.jpeg in fixtures/, passcode=vv01, admin-passcode=admin
+# Override passcodes via env (preferred for prod):
+#   SMOKE_PASSCODE='realprodpass' ADMIN_PASSCODE='realadminpass' ./scripts/test-pipeline.sh https://prod.example.com prod
 
 set -euo pipefail
 
-API="${1:?Usage: $0 <api-url> [stage] [fixture-path] [passcode]}"
+API="${1:?Usage: $0 <api-url> [stage] [fixture-path] [passcode] [admin-passcode]}"
 STAGE="${2:-dev}"
 FIXTURE="${3:-$(find fixtures -maxdepth 1 -type f \( -name '*.jpg' -o -name '*.jpeg' \) 2>/dev/null | head -1)}"
 PW="${4:-${SMOKE_PASSCODE:-vv01}}"
+ADMIN_PW="${5:-${ADMIN_PASSCODE:-admin}}"
 
 cd "$(dirname "$0")/.."
 
@@ -41,14 +43,14 @@ cleanup() {
   aws s3 rm "s3://$BUCKET/validated/$TID.jpg" 2>/dev/null || true
   aws s3 rm "s3://$BUCKET/rejected/$TID.jpg" 2>/dev/null || true
   echo "  cleaned: ticket row, number row, raw/validated/rejected S3 objects"
-  echo "  ⚠ sheets row not cleaned (requires Google API auth) — clear manually if needed"
+  echo "  ⚠ Sheet row and Drive PDF not cleaned — remove manually from Google Sheets and Drive"
 }
 
 echo "Pipeline test against $API (stage=$STAGE)"
 echo "Fixture: $FIXTURE ($(wc -c < "$FIXTURE" | tr -d ' ') bytes)"
 echo
 
-echo "→ Login..."
+echo "→ Login (driver)..."
 TOKEN=$(curl -s -X POST "$API/login" \
   -H 'content-type: application/json' \
   -d "$(jq -cn --arg pw "$PW" '{passcode: $pw}')" | jq -r '.token // empty')
@@ -87,6 +89,8 @@ print_record() {
         extractedData: (.extractedData.M // {} | with_entries(.value = (.value.S // .value.N // .value))),
         confirmedData: (.confirmedData.M // null),
         ticketDate: .ticketDate.S,
+        invoiceId: .invoiceId.S,
+        invoicePdfUrl: .invoicePdfUrl.S,
         timestamps: (.timestamps.M // {} | with_entries(.value = .value.N))
       }'
 }
@@ -109,9 +113,6 @@ case "$STATUS" in
     [[ -z "$TICKET_NUMBER" ]] && { echo "✗ No ticketNumber on record" >&2; exit 1; }
 
     echo "→ POST /tickets/$TID/confirm (ticketNumber=$TICKET_NUMBER)..."
-    # We're testing pipeline plumbing, not Textract accuracy. Always override date/day
-    # (past-7-day rule rejects stale fixture dates) and truckNo (must match the test user,
-    # default vv01 passcode → VV01). Other fields fall back to placeholders only when empty.
     TODAY_DATE="$(date +'%m/%d/%Y')"
     TODAY_DAY="$(date +'%A')"
     BODY=$(echo "$EXTRACTED" | jq -c \
@@ -155,10 +156,50 @@ case "$STATUS" in
     echo
     case "$FINAL" in
       populated)
-        SHEETS_ROW=$(aws dynamodb get-item --table-name "$TABLE" \
+        echo "✓ Pipeline reached populated"
+        echo
+
+        echo "→ Login (admin)..."
+        ADMIN_TOKEN=$(curl -s -X POST "$API/login" \
+          -H 'content-type: application/json' \
+          -d "$(jq -cn --arg pw "$ADMIN_PW" '{passcode: $pw}')" | jq -r '.token // empty')
+        [[ -z "$ADMIN_TOKEN" ]] && { echo "✗ Admin login failed" >&2; exit 1; }
+
+        ISO_DATE="$(date +'%Y-%m-%d')"
+        echo "→ POST /invoices (ticketId=$TID, date=$ISO_DATE)..."
+        INVOICE_CODE=$(curl -s -o /tmp/pipeline-invoice.json -w '%{http_code}' \
+          -X POST "$API/invoices" \
+          -H "Authorization: Bearer $ADMIN_TOKEN" \
+          -H 'content-type: application/json' \
+          -d "$(jq -cn --arg date "$ISO_DATE" --argjson ids "[\"$TID\"]" '{date: $date, ticketIds: $ids}')")
+        if [[ "$INVOICE_CODE" != "200" ]]; then
+          echo "✗ Invoice generation failed: HTTP $INVOICE_CODE" >&2
+          cat /tmp/pipeline-invoice.json >&2
+          rm -f /tmp/pipeline-invoice.json
+          exit 1
+        fi
+        INVOICE_ID=$(jq -r '.invoiceId // empty' /tmp/pipeline-invoice.json)
+        PDF_URL=$(jq -r '.pdfUrl // empty' /tmp/pipeline-invoice.json)
+        MESSAGES=$(jq -r '.messages // [] | join(", ")' /tmp/pipeline-invoice.json)
+        rm -f /tmp/pipeline-invoice.json
+
+        [[ -z "$INVOICE_ID" || -z "$PDF_URL" ]] && { echo "✗ Invoice response missing invoiceId or pdfUrl" >&2; exit 1; }
+
+        INVOICE_STATUS=$(aws dynamodb get-item --table-name "$TABLE" \
           --key "{\"ticketId\":{\"S\":\"$TID\"}}" \
-          --query 'Item.sheetsRow.N' --output text 2>/dev/null || echo "")
-        echo "✓ Pipeline succeeded end-to-end (uploaded → validated → extracted → confirmed → populated, sheets row: ${SHEETS_ROW:-?})"
+          --query 'Item.status.S' --output text 2>/dev/null || echo "")
+        [[ "$INVOICE_STATUS" != "invoiced" ]] && { echo "✗ DynamoDB status not invoiced after invoice generation: $INVOICE_STATUS" >&2; exit 1; }
+
+        echo
+        echo "Dynamo record after invoice:"
+        print_record
+        echo
+        echo "✓ Pipeline succeeded end-to-end (uploaded → validated → extracted → confirmed → populated → invoiced)"
+        echo "  invoiceId: $INVOICE_ID"
+        echo "  pdfUrl:    $PDF_URL"
+        [[ -n "$MESSAGES" ]] && echo "  messages:  $MESSAGES"
+        echo
+        echo "  ⚠ Sheet row and Drive PDF not cleaned — remove manually from Google Sheets and Drive"
         echo
         cleanup
         ;;
@@ -167,7 +208,7 @@ case "$STATUS" in
         exit 1
         ;;
       confirmed)
-        echo "✗ Status stuck at 'confirmed' — sheets-writer likely didn't fire (check EventBridge rule + Lambda logs)" >&2
+        echo "✗ Status stuck at 'confirmed' — sheets-writer likely didn't fire (check SQS pipe + Lambda logs)" >&2
         exit 1
         ;;
       *)
