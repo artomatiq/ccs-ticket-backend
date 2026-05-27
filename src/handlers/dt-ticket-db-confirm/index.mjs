@@ -196,7 +196,13 @@ export const handler = async (event) => {
     )
   } catch (err) {
     if (err.name === "TransactionCanceledException") {
-      return json(409, { error: "Ticket not in 'extracted' state, or ticketNumber already filed" })
+      const reasons = err.CancellationReasons ?? []
+      const ticketConditionFailed = reasons[0]?.Code === "ConditionalCheckFailed"
+      const numberConditionFailed = reasons[1]?.Code === "ConditionalCheckFailed"
+      if (numberConditionFailed && !ticketConditionFailed) {
+        return json(409, { error: `Ticket number ${ticketNumber} has already been filed` })
+      }
+      return json(409, { error: "Ticket is no longer in 'extracted' state" })
     }
     throw err
   }
