@@ -208,5 +208,5 @@ export const handler = async (event) => {
   }
 
   console.log("Confirmed:", ticketId, ticketNumber)
-  return json(200, { ticketId, ticketNumber, status: "confirmed" })
+  return json(200, { ticketId, ticketNumber, status: "confirmed", message: `Ticket #${ticketNumber} confirmed.` })
 }
