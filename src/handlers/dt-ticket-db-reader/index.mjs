@@ -42,7 +42,7 @@ const getOne = async (ticketId, user) => {
     statusMessage: t.statusMessage ?? null,
   }
   if (t.status === "extracted" && t.validatedKey) {
-    body.extractedData = t.extractedData ?? null
+    body.extraction = t.extraction ? { data: t.extraction.data, apex: t.extraction.apex } : null
     body.imageUrl = await presignGet(t.validatedKey)
   }
   return json(200, body)

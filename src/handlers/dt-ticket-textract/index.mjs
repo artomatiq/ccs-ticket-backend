@@ -255,7 +255,7 @@ export const handler = async (event) => {
       new UpdateCommand({
         TableName: TABLE,
         Key: { ticketId },
-        UpdateExpression: "SET #status = :extracted, #ts.#extractedAt = :now, extractedData = :data, extractionConfidence = :confidence, extractionApex = :apex",
+        UpdateExpression: "SET #status = :extracted, #ts.#extractedAt = :now, extraction = :extraction",
         ConditionExpression: "#status = :extracting",
         ExpressionAttributeNames: {
           "#status": "status",
@@ -266,9 +266,7 @@ export const handler = async (event) => {
           ":extracting": "extracting",
           ":extracted": "extracted",
           ":now": Date.now(),
-          ":data": extracted,
-          ":confidence": confidence,
-          ":apex": apex,
+          ":extraction": { data: extracted, confidence, apex },
         },
       })
     )
