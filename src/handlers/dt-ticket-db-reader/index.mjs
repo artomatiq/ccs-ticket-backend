@@ -48,20 +48,29 @@ const getOne = async (ticketId, user) => {
   return json(200, body)
 }
 
+const queryByStatus = (status) =>
+  dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      IndexName: "status-ticketDate-index",
+      KeyConditionExpression: "#status = :status",
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: { ":status": status },
+    })
+  )
+
 const list = async (user, status) => {
   if (user !== "ADMIN") return json(403, { error: "Admin only" })
 
   let items
-  if (status) {
-    const res = await dynamo.send(
-      new QueryCommand({
-        TableName: TABLE,
-        IndexName: "status-ticketDate-index",
-        KeyConditionExpression: "#status = :status",
-        ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: { ":status": status },
-      })
-    )
+  if (status === "populated") {
+    const [populated, confirmed] = await Promise.all([
+      queryByStatus("populated"),
+      queryByStatus("confirmed"),
+    ])
+    items = [...(populated.Items ?? []), ...(confirmed.Items ?? [])]
+  } else if (status) {
+    const res = await queryByStatus(status)
     items = res.Items ?? []
   } else {
     const res = await dynamo.send(new ScanCommand({ TableName: TABLE }))
