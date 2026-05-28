@@ -156,6 +156,14 @@ function generateInvoice(date, requestTickets) {
       t => normalize("ticketNumber", String(t.ticketNumber)) === ticketNum
     )
     if (!reqTicket) {
+      const alreadyInvoicedNums = canonicalRows
+        .filter(r => String(r.values[INVOICE_COL - 1]).trim().length > 0)
+        .map(r => `#${normalize("ticketNumber", r.values[getCol("ticketNumber") - 1])}`)
+      if (alreadyInvoicedNums.length > 0) {
+        throw new Error(
+          `For date ${date}, already invoiced: ${alreadyInvoicedNums.join(", ")}—manual intervention on Sheet required.`
+        )
+      }
       throw new Error(
         `Sheet row ${row.rowNum} (ticket #${ticketNum}) has no matching request ticket — manual intervention required`
       )
