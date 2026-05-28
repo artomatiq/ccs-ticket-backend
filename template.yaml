@@ -25,6 +25,16 @@ Resources:
         Type: AWS::Serverless::HttpApi
         Properties:
             Name: !Sub "dt-api-${Stage}"
+            CorsConfiguration:
+                AllowOrigins:
+                    - "*"
+                AllowMethods:
+                    - GET
+                    - POST
+                    - OPTIONS
+                AllowHeaders:
+                    - Content-Type
+                    - Authorization
             Auth:
                 Authorizers:
                     JwtAuthorizer:
@@ -462,6 +472,43 @@ Resources:
                 Sourcemap: true
                 External:
                     - "@aws-sdk/*"
+
+    InvoicePdf:
+        Type: AWS::Serverless::Function
+        Properties:
+            FunctionName: !Sub "dt-invoice-pdf-${Stage}"
+            CodeUri: src/
+            Handler: handlers/dt-invoice-pdf/index.handler
+            Timeout: 30
+            Environment:
+                Variables:
+                    GOOGLE_SA_SECRET: dt-ticket/google-sa
+            Policies:
+                - Statement:
+                      - Effect: Allow
+                        Action:
+                            - secretsmanager:GetSecretValue
+                        Resource:
+                            - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:dt-ticket/google-sa-*
+            Layers:
+                - !Ref GoogleApiLayer
+            Events:
+                GetPdf:
+                    Type: HttpApi
+                    Properties:
+                        ApiId: !Ref Api
+                        Path: /invoices/{fileId}
+                        Method: GET
+        Metadata:
+            BuildMethod: esbuild
+            BuildProperties:
+                EntryPoints:
+                    - handlers/dt-invoice-pdf/index.mjs
+                Target: es2022
+                Sourcemap: true
+                External:
+                    - "@aws-sdk/*"
+                    - "googleapis"
 
     # ── Stateful ──────────────────────────────────────────────
 

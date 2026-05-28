@@ -83,9 +83,13 @@ const list = async (user, status) => {
       status: t.status,
       statusMessage: t.statusMessage ?? null,
       ticketNumber: t.ticketNumber ?? null,
+      ticketDate: t.ticketDate ?? null,
       userId: t.userId ?? null,
       confirmedData: t.confirmedData ?? null,
       confirmedAt: t.confirmedAt ?? null,
+      validatedKey: t.validatedKey ?? null,
+      hours: t.hours ?? null,
+      amount: t.amount ?? null,
       imageUrl: t.validatedKey ? await presignGet(t.validatedKey) : null,
     }))
   )
