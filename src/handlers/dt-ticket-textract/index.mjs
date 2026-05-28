@@ -14,6 +14,18 @@ const nameCorrections = {
   faulcomer: "Faulconer",
 }
 
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+const dayFromDateStr = (dateStr) => {
+  const parts = dateStr.split("/")
+  if (parts.length !== 3) return null
+  let [m, d, y] = parts
+  if (y.length === 2) y = "20" + y
+  const date = new Date(Date.UTC(+y, +m - 1, +d))
+  if (isNaN(date.getTime())) return null
+  return DAYS[date.getUTCDay()]
+}
+
 const streamToBuffer = async (stream) => {
   const chunks = []
   for await (const chunk of stream) chunks.push(chunk)
@@ -227,7 +239,10 @@ export const handler = async (event) => {
     }
 
     if (extracted.day) {
-      extracted.day = capitalizeFirst(extracted.day.toLowerCase().replace(/\s+/g, ""))
+      extracted.day = capitalizeFirst(extracted.day.toLowerCase().replace(/[\s\W]+/g, ""))
+      if (!DAYS.includes(extracted.day) && extracted.date) {
+        extracted.day = dayFromDateStr(extracted.date) ?? extracted.day
+      }
     }
     if (extracted.customerName) extracted.customerName = capitalizeWords(extracted.customerName)
     if (extracted.jobName) extracted.jobName = capitalizeWords(extracted.jobName).replace(/#\s+/g, "#")
