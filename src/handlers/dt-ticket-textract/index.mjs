@@ -71,6 +71,19 @@ const parseTime = (time) => {
     if (h > 23 || m > 59) return null
     return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`
   }
+
+  // bare integer, no am/pm, no colon
+  // heuristic: start 5am–2pm, stop 5am–8pm → 1–4 are always pm; 12 is noon; 5–11 are am; 13–23 already 24h
+  match = time.match(/^(\d{1,2})$/)
+  if (match) {
+    let h = parseInt(match[1])
+    if (h === 0 || h > 23) return null
+    if (h >= 13) return `${h.toString().padStart(2, "0")}:00`
+    if (h >= 1 && h <= 4) h += 12
+    // h 5–12: treat as-is (5–11 = am, 12 = noon)
+    return `${h.toString().padStart(2, "0")}:00`
+  }
+
   return null
 }
 
