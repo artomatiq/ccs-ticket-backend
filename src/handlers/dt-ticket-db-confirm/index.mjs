@@ -146,7 +146,10 @@ export const handler = async (event) => {
     errors.push(`truckNo '${confirmedData.truckNo}' does not match driver '${user}'`)
   }
 
-  if (errors.length) return json(400, { error: "Validation failed", details: errors })
+  if (errors.length) {
+    console.log("Validation failed:", ticketId, JSON.stringify(errors))
+    return json(400, { error: "Validation failed", details: errors })
+  }
 
   const hours = Math.round(((stopMin - startMin) / 60) * 4) / 4
   const amount = hours * RATE

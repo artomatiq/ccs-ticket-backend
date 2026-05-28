@@ -52,7 +52,7 @@ const parseTime = (time) => {
     .replace(/\./g, ":")
     .replace(/(am|pm)\1+/g, "$1")
 
-  let match = time.match(/^(\d{1,2})(?::(\d{1,2}))?(am|pm)$/)
+  let match = time.match(/^(\d{1,2})(?::?(\d{2}))?(am|pm)$/)
   if (match) {
     let [, h, m, p] = match
     h = parseInt(h)
