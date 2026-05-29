@@ -58,11 +58,13 @@ flowchart TD
     AS --> DRIVE[(Google Drive PDF)]
     AS --> SHEET
     INV --> DBINV[status: invoiced]
+    ADMIN --> PDFPROXY[GET /invoices/&lcub;fileId&rcub; → dt-invoice-pdf]
+    PDFPROXY --> DRIVE
 ```
 
 The system has three runtime planes:
 
-1. **HTTP edge** — API Gateway HTTP API ([Api](template.yaml#L24-L37)) with a single custom Lambda authorizer (`JwtAuthorizer`) attached to every route except `POST /login`.
+1. **HTTP edge** — API Gateway HTTP API ([Api](template.yaml#L24-L47)) with a single custom Lambda authorizer (`JwtAuthorizer`) attached to every route except `POST /login`. Seven routes total (login, presign, list/get tickets, confirm, generate invoice, fetch PDF).
 2. **Event pipeline** — `TicketTable`'s DynamoDB stream fans out to three consumers via filter patterns on the `status` attribute. Two consumers (`validator`, `textract`) are direct event-source mappings with DLQs; the third (`sheets-writer`) goes through an EventBridge Pipe → SQS for retry-with-redrive semantics.
 3. **Apps Script web app** — a public HTTPS endpoint executing as the deploying Google user, secured by a shared admin secret in the request body, with `LockService` serializing concurrent invocations.
 
@@ -84,32 +86,33 @@ The system has three runtime planes:
 | `dt-ticket-db-confirm` | `POST /tickets/{id}/confirm` | Server-side validation of edited fields; quarter-hour rounding + amount cap; transactional write of `confirmed` + ticket-number dedup. | [src/handlers/dt-ticket-db-confirm/index.mjs](src/handlers/dt-ticket-db-confirm/index.mjs) |
 | `dt-sheets-writer` | SQS `dt-ticket-confirmed` | Builds the 14-column row, appends to the Invoice spreadsheet via Sheets API, transactionally flips `confirmed` → `populated`. | [src/handlers/dt-sheets-writer/index.mjs](src/handlers/dt-sheets-writer/index.mjs) |
 | `dt-invoice-generator` | `POST /invoices` (admin only) | `BatchGet` selected tickets, forwards to Apps Script with shared secret, transactionally flips `populated` → `invoiced`. | [src/handlers/dt-invoice-generator/index.mjs](src/handlers/dt-invoice-generator/index.mjs) |
-| `TicketStageRecovery` | *(planned)* | CloudWatch-scheduled sweep for tickets stuck in transient states (`extracting`, `confirmed`, `awaiting-upload`); folder exists but unimplemented. | [src/handlers/TicketStageRecovery/](src/handlers/TicketStageRecovery/) |
+| `dt-invoice-pdf` | `GET /invoices/{fileId}` (admin only) | Drive PDF proxy. Parses a Drive file ID, fetches the PDF bytes via the service account (readonly Drive scope), returns base64-encoded `application/pdf`. | [src/handlers/dt-invoice-pdf/index.mjs](src/handlers/dt-invoice-pdf/index.mjs) |
+| `TicketStageRecovery` | *(planned, not present in repo)* | CloudWatch-scheduled sweep for tickets stuck in transient states (`extracting`, `confirmed`, `awaiting-upload`). No handler folder or template resource exists today. | — |
 
-All functions are **nodejs22.x on arm64** with `Tracing: Active` and JSON `LoggingConfig` ([template.yaml:13-22](template.yaml#L13-L22)). Default timeout is 30s; the validator (512 MB / 60s) and textract (1024 MB / 60s) functions have raised limits ([template.yaml:201-202](template.yaml#L201-L202), [template.yaml:254-255](template.yaml#L254-L255)).
+All functions are **nodejs22.x on arm64** with `Tracing: Active` and JSON `LoggingConfig` ([template.yaml:13-22](template.yaml#L13-L22)). Default timeout is 30s; the validator (512 MB / 60s) and textract (1024 MB / 60s) functions have raised limits ([template.yaml:211-212](template.yaml#L211-L212), [template.yaml:264-265](template.yaml#L264-L265)). `SheetsWriter` and `InvoiceGenerator` raise timeout to 60s ([template.yaml:386](template.yaml#L386), [template.yaml:436](template.yaml#L436)).
 
 ### DynamoDB tables
 
 | Name | Keys | GSIs | Stream | Notes |
 |---|---|---|---|---|
-| `dt-tickets-{stage}` | PK `ticketId` (ULID) | `status-ticketDate-index` (PK `status`, SK `ticketDate`, projection ALL) | `NEW_IMAGE` | PAY_PER_REQUEST, SSE on, PITR on, `Retain` on delete. Stream drives validator, textract, and the confirmed-pipe. ([template.yaml:468-499](template.yaml#L468-L499)) |
-| `dt-ticket-numbers-{stage}` | PK `ticketNumber` | — | — | Dedup table for paper ticket numbers. Insert at confirm time; updated at populate time with `status: populated, populatedAt`. ([template.yaml:501-517](template.yaml#L501-L517)) |
+| `dt-tickets-{stage}` | PK `ticketId` (ULID) | `status-ticketDate-index` (PK `status`, SK `ticketDate`, projection ALL) | `NEW_IMAGE` | PAY_PER_REQUEST, SSE on, PITR on, `Retain` on delete. Stream drives validator, textract, and the confirmed-pipe. ([template.yaml:515-546](template.yaml#L515-L546)) |
+| `dt-ticket-numbers-{stage}` | PK `ticketNumber` | — | — | Dedup table for paper ticket numbers. Insert at confirm time; updated at populate time with `status: populated, populatedAt`. ([template.yaml:548-564](template.yaml#L548-L564)) |
 
 ### S3
 
 | Name | Layout | Notes |
 |---|---|---|
-| `dt-ticket-images-{stage}-{accountId}` | `raw/{ulid}.jpg`, `validated/{ulid}.jpg`, `rejected/{ulid}.jpg` | Versioning on; noncurrent versions expire at 30 days; AES256 default encryption; CORS allows PUT+GET from any origin; **bucket policy grants public read on `validated/*`** ([template.yaml:552-563](template.yaml#L552-L563)) so the Sheets HYPERLINK formula can resolve without presigning. |
+| `dt-ticket-images-{stage}-{accountId}` | `raw/{ulid}.jpg`, `validated/{ulid}.jpg`, `rejected/{ulid}.jpg` | Versioning on; noncurrent versions expire at 30 days; AES256 default encryption; CORS allows PUT+GET from any origin; **bucket policy grants public read on `validated/*`** ([template.yaml:599-610](template.yaml#L599-L610)) so the Sheets HYPERLINK formula can resolve without presigning. |
 
 ### Queues and pipes
 
 | Name | Purpose |
 |---|---|
-| `dt-ticket-validator-dlq` | Captures stream events the validator failed to process after 3 retries with bisect-on-error. ([template.yaml:565-569](template.yaml#L565-L569)) |
-| `dt-ticket-textract-dlq` | Same, for the textract stream consumer. ([template.yaml:571-575](template.yaml#L571-L575)) |
-| `dt-ticket-confirmed` | Standard SQS, 120s visibility timeout; redrives to its DLQ after 3 receives. Sole consumer is `dt-sheets-writer`. ([template.yaml:583-590](template.yaml#L583-L590)) |
-| `dt-ticket-confirmed-dlq` | DLQ for the above. ([template.yaml:577-581](template.yaml#L577-L581)) |
-| `dt-ticket-confirmed-pipe` | EventBridge Pipe: filters `TicketTable` stream for `status=confirmed`, batch size 1, target is the SQS queue. ([template.yaml:623-636](template.yaml#L623-L636)) |
+| `dt-ticket-validator-dlq` | Captures stream events the validator failed to process after 3 retries with bisect-on-error. 14-day retention. ([template.yaml:612-616](template.yaml#L612-L616)) |
+| `dt-ticket-textract-dlq` | Same, for the textract stream consumer. 14-day retention. ([template.yaml:618-622](template.yaml#L618-L622)) |
+| `dt-ticket-confirmed` | Standard SQS, 120s visibility timeout; redrives to its DLQ after 3 receives. Sole consumer is `dt-sheets-writer`. ([template.yaml:630-637](template.yaml#L630-L637)) |
+| `dt-ticket-confirmed-dlq` | DLQ for the above. 14-day retention. ([template.yaml:624-628](template.yaml#L624-L628)) |
+| `dt-ticket-confirmed-pipe` | EventBridge Pipe: filters `TicketTable` stream for `status=confirmed`, batch size 1, target is the SQS queue. ([template.yaml:670-683](template.yaml#L670-L683)) |
 
 ### HTTP API routes
 
@@ -121,6 +124,7 @@ All functions are **nodejs22.x on arm64** with `Tracing: Active` and JSON `Loggi
 | GET | `/tickets/{ticketId}` | JWT | `dt-ticket-db-reader` |
 | POST | `/tickets/{ticketId}/confirm` | JWT | `dt-ticket-db-confirm` |
 | POST | `/invoices` | JWT (admin only, enforced in handler) | `dt-invoice-generator` |
+| GET | `/invoices/{fileId}` | JWT (admin only, enforced in handler) | `dt-invoice-pdf` |
 
 ### Secrets and parameters
 
@@ -132,11 +136,11 @@ All deployment-bound secrets live in **AWS Systems Manager Parameter Store** und
 - `/dt/{stage}/apps-script-url` — Apps Script web-app URL (`dt-invoice-generator`).
 - `/dt/{stage}/admin-secret` — shared secret sent to Apps Script (`dt-invoice-generator`).
 
-The Google service-account JSON for the Sheets API lives in **Secrets Manager** as `dt-ticket/google-sa` (`dt-sheets-writer` only). KMS decrypt is allowed only via `ssm.{region}.amazonaws.com` ([template.yaml:64-67](template.yaml#L64-L67)).
+The Google service-account JSON for the Sheets/Drive APIs lives in **Secrets Manager** as `dt-ticket/google-sa`. Two lambdas pull from it: `dt-sheets-writer` (Sheets append, `spreadsheets` scope) and `dt-invoice-pdf` (Drive blob fetch, `drive.readonly` scope). KMS decrypt for SSM SecureStrings is allowed only via `ssm.{region}.amazonaws.com` (Login [template.yaml:71-77](template.yaml#L71-L77); JwtAuthorizer [template.yaml:113-119](template.yaml#L113-L119); InvoiceGenerator [template.yaml:452-458](template.yaml#L452-L458)).
 
 ### Layers
 
-- `dt-google-api-layer` — `googleapis` SDK ([layers/dt-google-api/](layers/dt-google-api/)), attached to `dt-sheets-writer`.
+- `dt-google-api-layer` — `googleapis` SDK ([layers/dt-google-api/](layers/dt-google-api/)), attached to `dt-sheets-writer` and `dt-invoice-pdf`.
 - `dt-sharp-layer` — `sharp` native image library ([layers/dt-sharp/](layers/dt-sharp/)), attached to `dt-ticket-validator`. Both layers are nodejs22.x / arm64.
 
 ---
@@ -168,14 +172,14 @@ Every transition is a conditional DynamoDB write: the `UpdateCommand` carries `C
 | `uploaded` | `dt-ticket-db-writer` ([L21-L38](src/handlers/dt-ticket-db-writer/index.mjs#L21-L38)) | `status = awaiting-upload` | `timestamps.uploadedAt` |
 | `rejected` | `dt-ticket-validator` ([L55-L94](src/handlers/dt-ticket-validator/index.mjs#L55-L94)) | `status = uploaded` | `statusMessage`, `timestamps.rejectedAt` |
 | `validated` | `dt-ticket-validator` ([L143-L162](src/handlers/dt-ticket-validator/index.mjs#L143-L162)) | `status = uploaded` | `validatedKey`, `ticketNumber`, `timestamps.validatedAt` |
-| `extracting` | `dt-ticket-textract` ([L74-L91](src/handlers/dt-ticket-textract/index.mjs#L74-L91)) | `status = validated` | `timestamps.extractingAt` |
-| `extracted` | `dt-ticket-textract` ([L254-L274](src/handlers/dt-ticket-textract/index.mjs#L254-L274)) | `status = extracting` | `extractedData`, `extractionConfidence`, `extractionApex`, `timestamps.extractedAt` |
-| `failed` | `dt-ticket-textract` ([L279-L298](src/handlers/dt-ticket-textract/index.mjs#L279-L298)) | `status = extracting` | `statusMessage`, `timestamps.failedAt` |
-| `confirmed` | `dt-ticket-db-confirm` ([L159-L196](src/handlers/dt-ticket-db-confirm/index.mjs#L159-L196)) | `status = extracted` + `attribute_not_exists(ticketNumber)` in `dt-ticket-numbers` (transaction) | `confirmedData`, `ticketDate`, `hours`, `amount`, `rate`, `timestamps.confirmedAt` |
-| `populated` | `dt-sheets-writer` ([L99-L132](src/handlers/dt-sheets-writer/index.mjs#L99-L132)) | `status = confirmed` (transaction also stamps ticket-number row) | `timestamps.populatedAt` |
+| `extracting` | `dt-ticket-textract` ([L99-L116](src/handlers/dt-ticket-textract/index.mjs#L99-L116)) | `status = validated` | `timestamps.extractingAt` |
+| `extracted` | `dt-ticket-textract` ([L282-L300](src/handlers/dt-ticket-textract/index.mjs#L282-L300)) | `status = extracting` | `extraction = { data, confidence, apex }`, `timestamps.extractedAt` |
+| `failed` | `dt-ticket-textract` ([L306-L324](src/handlers/dt-ticket-textract/index.mjs#L306-L324)) | `status = extracting` | `statusMessage`, `timestamps.failedAt` |
+| `confirmed` | `dt-ticket-db-confirm` ([L163-L199](src/handlers/dt-ticket-db-confirm/index.mjs#L163-L199)) | `status = extracted` + `attribute_not_exists(ticketNumber)` in `dt-ticket-numbers` (transaction) | `confirmedData`, `ticketDate`, `hours`, `amount`, `rate`, `timestamps.confirmedAt` |
+| `populated` | `dt-sheets-writer` ([L100-L132](src/handlers/dt-sheets-writer/index.mjs#L100-L132)) | `status = confirmed` (transaction also stamps ticket-number row with `status: populated`, `populatedAt`) | `timestamps.populatedAt` |
 | `invoiced` | `dt-invoice-generator` ([L148-L168](src/handlers/dt-invoice-generator/index.mjs#L148-L168)) | `status = populated` (transaction over all selected `ticketIds`) | `invoiceId`, `invoicePdfUrl`, `timestamps.invoicedTimestamp` |
 
-Terminal states: `rejected`, `failed`, `invoiced`. `extracting` and `confirmed` are *transient* states — they represent "claimed but not yet finished" and require external assistance (retries, SQS redelivery, or the planned `TicketStageRecovery` sweeper) to clear if the worker dies between the claim and the next durable write.
+Terminal states: `rejected`, `failed`, `invoiced`. `extracting` and `confirmed` are *transient* states — they represent "claimed but not yet finished" and require external assistance (retries, SQS redelivery, or a future `TicketStageRecovery` sweeper that is not implemented in the repo today) to clear if the worker dies between the claim and the next durable write.
 
 ---
 
@@ -206,7 +210,7 @@ The PUT to `raw/*.jpg` fires an S3 `ObjectCreated` notification ([template.yaml:
 
 ### 5 — DynamoDB stream → `validated` or `rejected`
 
-The status flip fires a `NEW_IMAGE` stream record. The event-source mapping for [dt-ticket-validator](src/handlers/dt-ticket-validator/index.mjs) filters for `status=uploaded` ([template.yaml:229-231](template.yaml#L229-L231)), batch size 1, 3 retries, bisect-on-error, dedicated DLQ.
+The status flip fires a `NEW_IMAGE` stream record. The event-source mapping for [dt-ticket-validator](src/handlers/dt-ticket-validator/index.mjs) filters for `status=uploaded` ([template.yaml:239-241](template.yaml#L239-L241)), batch size 1, 3 retries, bisect-on-error, dedicated DLQ.
 
 The validator:
 
@@ -225,9 +229,9 @@ The `validated` write fires a second stream event. [dt-ticket-textract](src/hand
 
 1. **Atomic claim:** flips `validated` → `extracting`. If another consumer beat it, the conditional check fails and the function returns silently.
 2. Downloads the `validated/` image and calls **Textract `AnalyzeDocument` with `FeatureTypes: ["FORMS"]`**.
-3. Builds a normalized key-value map (`date`, `day`, `customerName`, `jobName`, `city`, `truckNo`, `start`, `stop`), with each value carrying a confidence score and the top-right polygon point ("apex") of its bounding box. The apex is used by the frontend to overlay the editable input on top of the corresponding field on the displayed ticket image.
-4. Applies field-level cleanup: known customer-name corrections (`faulcomer → Faulconer`), date separator normalization (`. -` → `/`), title-casing for names and jobs, 12h→24h time parsing, and OCR fixups for truck IDs (`O→0`, `I→1`, `L→1`).
-5. Conditionally flips `extracting` → `extracted` and writes `extractedData`, `extractionConfidence`, `extractionApex`.
+3. Builds a normalized key-value map (`date`, `day`, `customerName`, `jobName`, `city`, `truckNo`, `start`, `stop`), with each value carrying a confidence score and the top-right polygon point ("apex") of its bounding box. The apex is used by the frontend to overlay the editable input on top of the corresponding field on the displayed ticket image. (`city` is extracted but is not a required field at confirm time.)
+4. Applies field-level cleanup: known customer-name corrections (`faulcomer → Faulconer`), date separator normalization (`. -` → `/`), `day` re-derived from `date` if the extracted day doesn't match a weekday name, title-casing for names and jobs, 12h→24h time parsing (including bare-integer heuristics), and OCR fixups for truck IDs (`O→0`, `I→1`, `L→1`).
+5. Conditionally flips `extracting` → `extracted` and writes a single `extraction` attribute containing `{ data, confidence, apex }`. (Earlier revisions split these into top-level `extractedData`/`extractionConfidence`/`extractionApex` fields; the current schema is a single map.)
 6. If *anything* throws between the claim and the final write, the catch block conditionally flips `extracting` → `failed` with a `statusMessage`, then re-throws so the stream consumer's DLQ also receives the event.
 
 ### 7 — Driver review and confirm
@@ -235,10 +239,10 @@ The `validated` write fires a second stream event. [dt-ticket-textract](src/hand
 The client polls `GET /tickets/{ticketId}` against [dt-ticket-db-reader](src/handlers/dt-ticket-db-reader/index.mjs):
 
 - 404 if the ticket doesn't exist; 403 if `userId` mismatch and requester is not `ADMIN`.
-- Returns `status` and `statusMessage` in all cases.
-- When `status === extracted` and `validatedKey` is set, also returns `extractedData` and a **presigned GET URL** for the validated image (15-min expiry).
+- Returns `ticketId`, `status`, and `statusMessage` in all cases.
+- When `status === extracted` and `validatedKey` is set, also returns `extraction: { data, apex }` (confidence is dropped from the response payload) and a **presigned GET URL** for the validated image (`URL_EXPIRY_SECONDS = 900`, 15-min).
 
-The UI renders the image with editable fields anchored at the `extractionApex` points. The driver corrects mistakes and submits `POST /tickets/{ticketId}/confirm` to [dt-ticket-db-confirm](src/handlers/dt-ticket-db-confirm/index.mjs). Server-side validation is strict:
+The UI renders the image with editable fields anchored at the `extraction.apex` points (frontend stores them as `corners`, see [TicketOverlay.jsx](../ccs-website/src/components/ticket/ticket-overlay/TicketOverlay.jsx)). The driver corrects mistakes and submits `POST /tickets/{ticketId}/confirm` to [dt-ticket-db-confirm](src/handlers/dt-ticket-db-confirm/index.mjs). Server-side validation is strict:
 
 | Check | Failure → 400 unless noted |
 |---|---|
@@ -265,7 +269,7 @@ A `TransactionCanceledException` from either condition → 409 to the client.
 
 ### 8 — Stream → Pipe → SQS → Sheets
 
-The `confirmed` write fires a third stream event. This stage uses a different topology than the previous two — an **EventBridge Pipe** ([template.yaml:623-636](template.yaml#L623-L636)) filters for `status=confirmed`, batch size 1, and writes to a standard **SQS** queue with `VisibilityTimeout: 120s` and a `maxReceiveCount: 3` redrive policy to a dedicated DLQ. The pipe assumes a least-privilege IAM role ([template.yaml:592-621](template.yaml#L592-L621)) that only grants stream read on the source and `sqs:SendMessage` on the target.
+The `confirmed` write fires a third stream event. This stage uses a different topology than the previous two — an **EventBridge Pipe** ([template.yaml:670-683](template.yaml#L670-L683)) filters for `status=confirmed`, batch size 1, and writes to a standard **SQS** queue with `VisibilityTimeout: 120s` and a `maxReceiveCount: 3` redrive policy to a dedicated DLQ. The pipe assumes a least-privilege IAM role ([template.yaml:639-668](template.yaml#L639-L668)) that only grants stream read on the source and `sqs:SendMessage` on the target.
 
 Why Pipe+SQS instead of a direct event-source mapping like the earlier stages? **Because the failure mode is different.** Validator and textract failures are usually deterministic (bad image, Textract throws on a malformed crop) — the DLQ is the right place. The sheets-writer talks to a third-party API (Google Sheets) whose failures are usually transient (rate limit, 5xx). SQS gives us a queue with native retry-with-redelivery semantics independent of the stream's iterator position.
 
@@ -300,7 +304,7 @@ This column layout is duplicated in [apps-script/schema.js](apps-script/schema.j
 
 ### 9 — Admin generates an invoice
 
-Admin signs in (same `/login` flow, separate passcode → `userId: ADMIN`) and hits `GET /tickets?status=populated`. The reader handler restricts list endpoints to `ADMIN` ([db-reader/index.mjs:52](src/handlers/dt-ticket-db-reader/index.mjs#L52)), then runs two parallel queries against `status-ticketDate-index` — one for `populated`, one for `confirmed` — and merges the results. This surfaces tickets whose sheet write failed (stuck at `confirmed` due to SQS DLQ exhaustion) alongside normally populated tickets. The frontend groups all results by `ticketDate`; any `confirmed` ticket in the selected date shows a dark overlay with a warning icon on the ticket preview, and the admin dashboard tile shows a separate warning badge with the count. The admin posts `{ date, ticketIds }` to `/invoices`.
+Admin signs in (same `/login` flow, separate passcode → `userId: ADMIN`) and hits `GET /tickets?status=populated`. The reader handler restricts list endpoints to `ADMIN` ([db-reader/index.mjs:62-63](src/handlers/dt-ticket-db-reader/index.mjs#L62-L63)), then runs two parallel queries against `status-ticketDate-index` — one for `populated`, one for `confirmed` — and merges the results. This surfaces tickets whose sheet write failed (stuck at `confirmed` due to SQS DLQ exhaustion) alongside normally populated tickets. The frontend groups all results by `ticketDate`; any `confirmed` ticket in the selected date shows a warning indicator on the ticket preview ("Sheet write failed"), and the admin dashboard tile shows a separate warning badge with the count. The "Generate Invoice" button is **disabled unless the currently selected date tab is the earliest unprocessed date** ([AdminInvoice.jsx#L100,L236-L237](../ccs-website/src/components/ticket/admin-invoice/AdminInvoice.jsx)), which forces invoices to be generated in chronological order. The admin posts `{ date, ticketIds }` to `/invoices`.
 
 [dt-invoice-generator](src/handlers/dt-invoice-generator/index.mjs):
 
@@ -308,7 +312,9 @@ Admin signs in (same `/login` flow, separate passcode → `userId: ADMIN`) and h
 2. Validates body: `date` is `YYYY-MM-DD`, `ticketIds` is a non-empty string array.
 3. `BatchGet` all `ticketIds`. 404 if any missing, 409 if any ticket's `ticketDate ≠ date`.
 4. Converts `date` to `M/D/YYYY` and posts to the Apps Script web app with the shared secret, 25s timeout, the per-ticket payload `{ ticketId, truckNo, ticketNumber, customerName, jobName, rate, hours, amount }`.
-5. On Apps Script success, transactionally flips every selected ticket `populated` → `invoiced` and stamps `invoiceId`, `invoicePdfUrl`, `timestamps.invoicedTimestamp`. Returns 200 to the admin with the PDF URL.
+5. On Apps Script success, transactionally flips every selected ticket `populated` → `invoiced` and stamps `invoiceId`, `invoicePdfUrl`, `timestamps.invoicedTimestamp`. Returns 200 to the admin with the PDF URL. The Apps Script may report `alreadyProcessed: true` (idempotent re-run) — in that case the same transactional update runs, but failures are logged without raising (lines [L137-L141](src/handlers/dt-invoice-generator/index.mjs#L137-L141)) since the sheet+Drive are already canonical.
+
+After the response, the admin UI does not consume `invoicePdfUrl` directly — it parses the Drive file ID out of the URL and fetches the PDF bytes through `GET /invoices/{fileId}` ([dt-invoice-pdf](src/handlers/dt-invoice-pdf/index.mjs)), which streams from Drive via the service account with `drive.readonly` scope and returns base64-encoded `application/pdf` so the iframe/`react-pdf` view in [InvoicePdfView.jsx](../ccs-website/src/components/ticket/admin-invoice/InvoicePdfView.jsx) can render without the admin needing Drive permissions on the file.
 
 ### 10 — Apps Script (PDF + sheet hyperlink)
 
@@ -325,11 +331,15 @@ Admin signs in (same `/login` flow, separate passcode → `userId: ADMIN`) and h
 9. **Link back.** For each canonical row, writes `=HYPERLINK("<pdfUrl>", "<invoiceId>")` into the Invoice # column.
 10. If step 9 throws after the PDF was already created, deletes the Drive file as cleanup and re-throws. This keeps the Drive folder and the sheet in sync: either both have the invoice or neither does.
 
-If the Apps Script call succeeded but the Lambda's `populated → invoiced` transaction fails, the lambda **does not** roll back the sheet — instead it returns 200 with a `warning` field and logs for manual reconciliation ([dt-invoice-generator/index.mjs:171-181](src/handlers/dt-invoice-generator/index.mjs#L171-L181)). The reasoning: the admin already has the PDF URL, the sheet already shows the invoice, and the DynamoDB status is the least-canonical view of the world. Better to surface the partial state than to attempt a multi-system rollback that could itself fail.
+If the Apps Script call succeeded but the Lambda's `populated → invoiced` transaction fails, the lambda **does not** roll back the sheet — instead it returns 200 with a `warning` field and logs for manual reconciliation ([dt-invoice-generator/index.mjs:169-182](src/handlers/dt-invoice-generator/index.mjs#L169-L182)). The reasoning: the admin already has the PDF URL, the sheet already shows the invoice, and the DynamoDB status is the least-canonical view of the world. Better to surface the partial state than to attempt a multi-system rollback that could itself fail.
+
+Note: Apps Script's `jsonResponse` helper ([doPost.js:38-42](apps-script/doPost.js#L38-L42)) accepts a `status` argument but **never actually sets the HTTP status** — Google Apps Script's `ContentService` can't set HTTP codes. Every Apps Script response is HTTP 200; error signaling is in the JSON body (`{ error: "Unauthorized" }`, etc.). The lambda's `callAppsScript` ([invoice-generator/index.mjs:21-25](src/handlers/dt-invoice-generator/index.mjs#L21-L25)) detects errors via `parsed.error || parsed.ok === false`, then bubbles them out as a 502 to the client.
 
 ### Happy-path verification
 
 [scripts/test-pipeline.sh](scripts/test-pipeline.sh) is the end-to-end harness: it logs in as a driver, mints a ticket, PUTs a real JPEG from [fixtures/](fixtures/), polls the row until `extracted` (60s timeout), POSTs `/confirm` with the extracted fields, waits for `populated` (30s), logs in as admin, POSTs `/invoices`, and asserts the final `invoiced` status plus presence of `invoiceId` and `pdfUrl`. It does not auto-clean the sheet row or the Drive PDF — those have to be removed by hand.
+
+The script's `print_record` and the post-extract field-pull both read `.Item.extractedData.M` ([test-pipeline.sh:98](scripts/test-pipeline.sh#L98), [test-pipeline.sh:118-122](scripts/test-pipeline.sh#L118-L122)), which is the **pre-refactor** shape; the current textract handler writes the field as `extraction.data`. Under the current schema the script's `EXTRACTED` will be `{}` and the subsequent `[[ -z "$TICKET_NUMBER" ]]` guard exits non-zero before `/confirm` is ever called. The script is out of sync with the handler.
 
 ---
 
@@ -343,7 +353,7 @@ The JWT is **HS256, hand-rolled** in [src/shared/jwt.mjs](src/shared/jwt.mjs). T
 
 ### Authorizer
 
-Every route except `/login` is gated by [dt-jwt-authorizer](src/handlers/dt-jwt-authorizer/index.mjs), a Lambda authorizer in `EnableSimpleResponses: true` mode. It returns `{ isAuthorized, context: { user } }`. The `user` claim is forwarded to downstream handlers as `event.requestContext.authorizer.lambda.user`.
+Every route except `/login` is gated by [dt-jwt-authorizer](src/handlers/dt-jwt-authorizer/index.mjs), a Lambda authorizer in `EnableSimpleResponses: true` mode. On success it returns `{ isAuthorized: true, context: { user } }`. On failure with a parseable cause it returns `{ isAuthorized: false, context: { reason } }` where `reason` is `EXPIRED`, `INVALID_SIGNATURE`, or `MALFORMED`; on any other path (missing/bad header, thrown error) it returns `{ isAuthorized: false }`. The `user` claim is forwarded to downstream handlers as `event.requestContext.authorizer.lambda.user`.
 
 **There is no authorizer cache.** The template does not set `AuthorizerResultTtlInSeconds`, so on HTTP API every request invokes the authorizer. At this scale that's fine — and it means logout (or a stolen token within its 30-minute window) doesn't have a cache-staleness window to reason about.
 
@@ -355,6 +365,8 @@ There are exactly two scopes — `ADMIN` and "driver (any of VV01, VV02)". The a
 - `dt-ticket-db-reader` single-ticket (`GET /tickets/{id}`) → 403 if `t.userId !== user && user !== "ADMIN"`.
 - `dt-ticket-db-confirm` → same ownership check; also `truckNo` must equal `user` (admin bypass).
 - `dt-invoice-generator` → 403 unless `user === "ADMIN"`.
+- `dt-invoice-pdf` → 403 unless `user === "ADMIN"`.
+- `dt-ticket-presign` → no scope check; any valid JWT can mint a ticket against its own `userId`.
 
 This puts the authorization logic adjacent to the data it protects, which is preferable to encoding scopes in the JWT for a system this small — fewer surfaces to keep in sync.
 
@@ -390,7 +402,7 @@ The script also defines a manual-fallback `Invoices > Generate Invoice for Selec
 
 ### Google Drive
 
-Used purely as a PDF blob store. The destination folder is identified by the `INVOICES_FOLDER` script property. The Lambda doesn't talk to Drive directly; only Apps Script does, using its native `DriveApp` binding.
+Used purely as a PDF blob store. The destination folder is identified by the `INVOICES_FOLDER` script property. Apps Script writes to Drive via `DriveApp`. The Lambda layer touches Drive only on read: `dt-invoice-pdf` ([src/handlers/dt-invoice-pdf/index.mjs](src/handlers/dt-invoice-pdf/index.mjs)) authenticates the same service-account JSON in Secrets Manager with `drive.readonly` scope and serves files via `drive.files.get({ alt: "media", supportsAllDrives: true })`. The handler passes the Drive error code through as the HTTP status (`err.code || 500`) on failure.
 
 ---
 
@@ -402,7 +414,7 @@ Every row in this matrix lists the detection signal, the current mitigation, and
 
 | Failure | Detection | Mitigation | Residual risk |
 |---|---|---|---|
-| Presign URL expires before client PUTs (>5 min) | Row sits at `awaiting-upload`; no `uploadedAt` timestamp. | Client retries via fresh `POST /tickets` (new ticketId). Old row stays orphaned. | Orphan rows in DynamoDB. **Planned:** `TicketStageRecovery` sweep. **Accepted** until then. |
+| Presign URL expires before client PUTs (>5 min) | Row sits at `awaiting-upload`; no `uploadedAt` timestamp. | Client retries via fresh `POST /tickets` (new ticketId). Old row stays orphaned. | Orphan rows in DynamoDB. **Planned (not in repo):** `TicketStageRecovery` sweep. **Accepted** until then. |
 | Client uploads but never polls | Row reaches `extracted`, no `confirm`. | Admin sees it in `GET /tickets?status=extracted`. | Manual recovery. Accepted. |
 | S3 PUT lands but `dt-ticket-db-writer` fails | S3 has the object; row stuck at `awaiting-upload`. | S3 event delivery has built-in retries; if the lambda repeatedly errors, S3 will give up after the configured retries. | Detectable by mismatch between `raw/` keys and rows in `awaiting-upload`. Accepted; no automated reconciliation. |
 | Duplicate S3 PUT to the same key | Conditional check on `status = awaiting-upload` fails on second invoke. | Logged and swallowed ([db-writer/index.mjs:42-45](src/handlers/dt-ticket-db-writer/index.mjs#L42-L45)). | None. |
@@ -421,7 +433,7 @@ Every row in this matrix lists the detection signal, the current mitigation, and
 | Failure | Detection | Mitigation | Residual risk |
 |---|---|---|---|
 | Textract API failure (5xx, throttling, malformed response) | Catch block flips `extracting` → `failed` with `statusMessage`, re-throws so DLQ also captures. | UI shows `failed`. Admin can manually retry by re-uploading. | DLQ has the original event for replay; no automated retry beyond the 3 stream attempts. Accepted. |
-| Lambda crash/timeout *between* the `extracting` claim and the final write | Row stuck at `extracting`; no `extractedAt`. | Stream consumer retries the same event; the second attempt's claim no-ops (already `extracting`) and the work proceeds. **If the catch block also fails**, row stays at `extracting` permanently. | **Planned:** `TicketStageRecovery` sweeps by age. **Accepted** until then. |
+| Lambda crash/timeout *between* the `extracting` claim and the final write | Row stuck at `extracting`; no `extractedAt`. | Stream consumer retries the same event; the second attempt's claim no-ops (already `extracting`, condition fails) and the function returns silently — **it does not redo the Textract call**, so the row stays stuck until manual replay. If the catch block also fails, same outcome. | **Planned (not in repo):** `TicketStageRecovery` sweeps by age. **Accepted** until then. |
 | Extracted KV map has noisy or missing fields | No automated detection — extraction returns whatever Textract gave. | Driver review at confirm time catches the issues. Confirm-handler validation enforces field-level correctness before write. | None — this is by design; the human is the final filter. |
 
 ### Stage 4 — Confirm
@@ -462,7 +474,7 @@ Every row in this matrix lists the detection signal, the current mitigation, and
 | Cold-start latency on long-idle lambdas | Slow first response. | None. | At this scale, cold starts are normal. Accepted. |
 | JWT secret leak | Tokens still expire in 30 min; rotate `/dt/{stage}/jwt-secret` in SSM. | Manual rotation; no caching means rotation takes effect on next request. | Accepted given threat model (small private user set). |
 | DDB stream consumer lag during a Lambda outage | Stream retains 24h of events; will catch up automatically. | None needed. | Accepted. |
-| Stuck transient states (`extracting`, `confirmed`) past their `*At` timestamp | Currently undetected. | **Planned:** `TicketStageRecovery` scheduled lambda that scans by status + age and either retries or marks `failed`. | **Open.** Accepted as the most-impactful follow-up. |
+| Stuck transient states (`extracting`, `confirmed`) past their `*At` timestamp | Currently undetected. | **Planned (not in repo):** `TicketStageRecovery` scheduled lambda that scans by status + age and either retries or marks `failed`. No handler folder, template resource, or schedule rule exists today. | **Open.** Accepted as the most-impactful follow-up. |
 
 ---
 
