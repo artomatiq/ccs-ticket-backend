@@ -353,7 +353,7 @@ Resources:
                 Variables:
                     TICKET_TABLE: !Sub "dt-tickets-${Stage}"
                     TICKET_NUMBER_TABLE: !Sub "dt-ticket-numbers-${Stage}"
-                    RATE: "105"
+                    RATE: "100"
                     MAX_AMOUNT: "5000"
             Policies:
                 - DynamoDBCrudPolicy:
@@ -538,6 +538,12 @@ Resources:
                         KeyType: HASH
                       - AttributeName: ticketDate
                         KeyType: RANGE
+                  Projection:
+                      ProjectionType: ALL
+                - IndexName: status-index
+                  KeySchema:
+                      - AttributeName: status
+                        KeyType: HASH
                   Projection:
                       ProjectionType: ALL
             PointInTimeRecoverySpecification:

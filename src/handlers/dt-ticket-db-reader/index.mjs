@@ -48,11 +48,11 @@ const getOne = async (ticketId, user) => {
   return json(200, body)
 }
 
-const queryByStatus = (status) =>
+const queryByStatus = (status, { dateIndex = false } = {}) =>
   dynamo.send(
     new QueryCommand({
       TableName: TABLE,
-      IndexName: "status-ticketDate-index",
+      IndexName: dateIndex ? "status-ticketDate-index" : "status-index",
       KeyConditionExpression: "#status = :status",
       ExpressionAttributeNames: { "#status": "status" },
       ExpressionAttributeValues: { ":status": status },
@@ -65,8 +65,8 @@ const list = async (user, status) => {
   let items
   if (status === "populated") {
     const [populated, confirmed] = await Promise.all([
-      queryByStatus("populated"),
-      queryByStatus("confirmed"),
+      queryByStatus("populated", { dateIndex: true }),
+      queryByStatus("confirmed", { dateIndex: true }),
     ])
     items = [...(populated.Items ?? []), ...(confirmed.Items ?? [])]
   } else if (status) {
