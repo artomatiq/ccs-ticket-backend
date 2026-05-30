@@ -69,6 +69,7 @@ const parseTime = (time) => {
     h = parseInt(h)
     m = parseInt(m)
     if (h > 23 || m > 59) return null
+    if (h >= 1 && h <= 4) h += 12
     return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`
   }
 
