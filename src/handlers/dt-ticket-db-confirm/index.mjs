@@ -1,11 +1,11 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb"
+import { loadParams } from "../../shared/ssm.mjs"
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}))
 
 const TABLE = process.env.TICKET_TABLE
 const NUMBER_TABLE = process.env.TICKET_NUMBER_TABLE
-const RATE = Number(process.env.RATE)
 const MAX_AMOUNT = Number(process.env.MAX_AMOUNT)
 
 const json = (statusCode, body) => ({
@@ -57,6 +57,9 @@ const timeToMinutes = (s) => {
 }
 
 export const handler = async (event) => {
+  const { RATE: rateStr } = await loadParams({ RATE: process.env.RATE_PARAM })
+  const RATE = Number(rateStr)
+
   const user = event.requestContext?.authorizer?.lambda?.user
   if (!user) return json(401, { error: "Unauthorized" })
 

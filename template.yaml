@@ -353,13 +353,17 @@ Resources:
                 Variables:
                     TICKET_TABLE: !Sub "dt-tickets-${Stage}"
                     TICKET_NUMBER_TABLE: !Sub "dt-ticket-numbers-${Stage}"
-                    RATE: "105"
+                    RATE_PARAM: !Sub "/dt/${Stage}/rate"
                     MAX_AMOUNT: "5000"
             Policies:
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketTable
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketNumberTable
+                - Statement:
+                      Effect: Allow
+                      Action: ssm:GetParameters
+                      Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/${Stage}/rate"
             Events:
                 Confirm:
                     Type: HttpApi
