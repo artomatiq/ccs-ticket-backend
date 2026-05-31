@@ -27,7 +27,7 @@ Resources:
             Name: !Sub "dt-api-${Stage}"
             CorsConfiguration:
                 AllowOrigins:
-                    - "*"
+                    - "https://carolinascourier.com"
                 AllowMethods:
                     - GET
                     - POST
@@ -598,7 +598,7 @@ Resources:
             CorsConfiguration:
                 CorsRules:
                     - AllowedMethods: [PUT, GET]
-                      AllowedOrigins: ["*"]
+                      AllowedOrigins: ["https://carolinascourier.com"]
                       AllowedHeaders: ["*"]
                       MaxAge: 3000
 
