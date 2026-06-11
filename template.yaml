@@ -21,10 +21,22 @@ Globals:
             LogFormat: JSON
 
 Resources:
+    ApiAccessLogGroup:
+        Type: AWS::Logs::LogGroup
+        DeletionPolicy: Delete
+        UpdateReplacePolicy: Delete
+        Properties:
+            LogGroupName: !Sub "/aws/api-gateway/dt-api-${Stage}"
+            RetentionInDays: 30
+
     Api:
         Type: AWS::Serverless::HttpApi
         Properties:
             Name: !Sub "dt-api-${Stage}"
+            AccessLogSettings:
+                DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+                Format: >-
+                    {"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","path":"$context.path","status":"$context.status","protocol":"$context.protocol","responseLatency":"$context.responseLatency","responseLength":"$context.responseLength","integrationError":"$context.integration.error","authorizerError":"$context.authorizer.error"}
             CorsConfiguration:
                 AllowOrigins:
                     - "https://carolinascourier.com"
@@ -353,13 +365,17 @@ Resources:
                 Variables:
                     TICKET_TABLE: !Sub "dt-tickets-${Stage}"
                     TICKET_NUMBER_TABLE: !Sub "dt-ticket-numbers-${Stage}"
-                    RATE: "100"
+                    RATE_PARAM: !Sub "/dt/${Stage}/rate"
                     MAX_AMOUNT: "5000"
             Policies:
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketTable
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketNumberTable
+                - Statement:
+                      Effect: Allow
+                      Action: ssm:GetParameters
+                      Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dt/${Stage}/rate"
             Events:
                 Confirm:
                     Type: HttpApi
