@@ -21,10 +21,22 @@ Globals:
             LogFormat: JSON
 
 Resources:
+    ApiAccessLogGroup:
+        Type: AWS::Logs::LogGroup
+        DeletionPolicy: Delete
+        UpdateReplacePolicy: Delete
+        Properties:
+            LogGroupName: !Sub "/aws/api-gateway/dt-api-${Stage}"
+            RetentionInDays: 30
+
     Api:
         Type: AWS::Serverless::HttpApi
         Properties:
             Name: !Sub "dt-api-${Stage}"
+            AccessLogSettings:
+                DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+                Format: >-
+                    {"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","path":"$context.path","status":"$context.status","protocol":"$context.protocol","responseLatency":"$context.responseLatency","responseLength":"$context.responseLength","integrationError":"$context.integration.error","authorizerError":"$context.authorizer.error"}
             CorsConfiguration:
                 AllowOrigins:
                     - "*"
