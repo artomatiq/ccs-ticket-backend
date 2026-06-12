@@ -5,6 +5,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Invoices')
     .addItem('Generate Invoice for Selected Row', 'generateForSelectedRow')
+    .addItem('Calc Hours for Selected Row(s)', 'calcHoursForSelectedRows')
     .addToUi();
 }
 
