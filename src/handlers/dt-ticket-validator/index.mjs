@@ -106,11 +106,13 @@ export const handler = async (event) => {
   }
 
   const { width, height } = await sharp(imgBuffer).metadata()
+  const left = Math.round(width * 0.667)
+  const top = Math.round(height * 0.005)
   const roiBuffer = await sharp(imgBuffer)
     .extract({
-      left: Math.round(width * 0.667),
-      top: Math.round(height * 0.005),
-      width: Math.round(width * 0.333),
+      left,
+      top,
+      width: width - left,
       height: Math.round(height * 0.070),
     })
     .toBuffer()
