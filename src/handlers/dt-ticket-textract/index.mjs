@@ -225,7 +225,8 @@ export const handler = async (event) => {
     const getTopRightPoint = (entry) => {
       const point = entry?.Geometry?.Polygon?.[1]
       if (!point) return null
-      return [Number(point.X.toFixed(2)), Number(point.Y.toFixed(2))]
+      const w = entry?.Geometry?.BoundingBox?.Width
+      return [Number(point.X.toFixed(2)), Number(point.Y.toFixed(2)), w != null ? Number(w.toFixed(2)) : null]
     }
 
     const apex = {
