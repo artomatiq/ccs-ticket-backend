@@ -108,29 +108,34 @@ export const handler = async (event) => {
   const { width, height } = await sharp(imgBuffer).metadata()
   const left = Math.round(width * 0.667)
   const top = Math.round(height * 0.005)
-  const roiBuffer = await sharp(imgBuffer)
-    .extract({
-      left,
-      top,
-      width: width - left,
-      height: Math.round(height * 0.070),
-    })
-    .toBuffer()
+  const roi = {
+    left,
+    top,
+    width: width - left,
+    height: Math.round(height * 0.070),
+  }
+  const roiBuffer = await sharp(imgBuffer).extract(roi).toBuffer()
+  console.log("Ticket number ROI:", JSON.stringify({ imageWidth: width, imageHeight: height, ...roi }))
 
   const textractRes = await textract.send(
     new DetectDocumentTextCommand({
       Document: { Bytes: roiBuffer },
     })
   )
-  const ticketWords = textractRes.Blocks
-    .filter((b) => b.BlockType === "WORD")
-    .map((b) => b.Text)
+  const ticketWordBlocks = textractRes.Blocks.filter((b) => b.BlockType === "WORD")
+  console.log(
+    "Ticket number ROI words:",
+    JSON.stringify(
+      ticketWordBlocks.map((b) => ({ text: b.Text, confidence: Math.round(b.Confidence) }))
+    )
+  )
+  const ticketWords = ticketWordBlocks.map((b) => b.Text)
   const ticketNumber = ticketWords.find((t) => /^\d{4,10}$/.test(t))
 
   if (!ticketNumber) {
     return reject("ticket number not detected", imgBuffer)
   }
-  console.log("Extracted ticket number:", ticketNumber)
+  console.log("Extracted ticket number:", ticketNumber, "from candidates:", JSON.stringify(ticketWords))
 
   const validatedKey = `validated/${ticketId}.jpg`
   await s3.send(
