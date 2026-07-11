@@ -130,7 +130,9 @@ export const handler = async (event) => {
     )
   )
   const ticketWords = ticketWordBlocks.map((b) => b.Text)
-  const ticketNumber = ticketWords.find((t) => /^\d{4,10}$/.test(t))
+  const ticketNumber = ticketWordBlocks
+    .filter((b) => b.Confidence >= 50 && /^\d{4,10}$/.test(b.Text))
+    .sort((a, b) => b.Confidence - a.Confidence)[0]?.Text
 
   if (!ticketNumber) {
     return reject("ticket number not detected", imgBuffer)
