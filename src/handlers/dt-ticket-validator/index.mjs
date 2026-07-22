@@ -106,7 +106,7 @@ export const handler = async (event) => {
   }
 
   const { width, height } = await sharp(imgBuffer).metadata()
-  const left = Math.round(width * 0.667)
+  const left = Math.round(width * 0.55)
   const top = Math.round(height * 0.005)
   const roi = {
     left,
