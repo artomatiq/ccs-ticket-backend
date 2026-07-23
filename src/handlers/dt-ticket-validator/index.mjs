@@ -2,7 +2,6 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb"
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3"
 import { TextractClient, DetectDocumentTextCommand } from "@aws-sdk/client-textract"
-import sharp from "sharp"
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}))
 const s3 = new S3Client({})
@@ -105,28 +104,28 @@ export const handler = async (event) => {
     return reject(`file size out of range (${size} bytes)`, imgBuffer)
   }
 
-  const { width, height } = await sharp(imgBuffer).metadata()
-  const left = Math.round(width * 0.55)
-  const top = Math.round(height * 0.005)
-  const roi = {
-    left,
-    top,
-    width: width - left,
-    height: Math.round(height * 0.070),
+  const inTicketNumberRegion = (b) => {
+    const box = b.Geometry?.BoundingBox
+    return box && box.Top <= 0.1 && box.Left >= 0.5
   }
-  const roiBuffer = await sharp(imgBuffer).extract(roi).toBuffer()
-  console.log("Ticket number ROI:", JSON.stringify({ imageWidth: width, imageHeight: height, ...roi }))
 
   const textractRes = await textract.send(
     new DetectDocumentTextCommand({
-      Document: { Bytes: roiBuffer },
+      Document: { Bytes: imgBuffer },
     })
   )
-  const ticketWordBlocks = textractRes.Blocks.filter((b) => b.BlockType === "WORD")
+  const ticketWordBlocks = textractRes.Blocks.filter(
+    (b) => b.BlockType === "WORD" && inTicketNumberRegion(b)
+  )
   console.log(
-    "Ticket number ROI words:",
+    "Ticket number candidates:",
     JSON.stringify(
-      ticketWordBlocks.map((b) => ({ text: b.Text, confidence: Math.round(b.Confidence) }))
+      ticketWordBlocks.map((b) => ({
+        text: b.Text,
+        confidence: Math.round(b.Confidence),
+        top: Number(b.Geometry.BoundingBox.Top.toFixed(3)),
+        left: Number(b.Geometry.BoundingBox.Left.toFixed(3)),
+      }))
     )
   )
   const ticketWords = ticketWordBlocks.map((b) => b.Text)
