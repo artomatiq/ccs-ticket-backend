@@ -226,6 +226,7 @@ Resources:
                 Variables:
                     TICKET_TABLE: !Sub "dt-tickets-${Stage}"
                     TICKET_BUCKET: !Sub "dt-ticket-images-${Stage}-${AWS::AccountId}"
+                    NOVA_MODEL_ID: "amazon.nova-pro-v1:0"
             Policies:
                 - DynamoDBCrudPolicy:
                       TableName: !Ref TicketTable
@@ -233,8 +234,8 @@ Resources:
                       BucketName: !Ref TicketBucket
                 - Statement:
                       - Effect: Allow
-                        Action: textract:DetectDocumentText
-                        Resource: "*"
+                        Action: bedrock:InvokeModel
+                        Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-pro-v1:0"
                 - Statement:
                       - Effect: Allow
                         Action: sqs:SendMessage

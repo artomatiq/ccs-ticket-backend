@@ -1,21 +1,37 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb"
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3"
-import { TextractClient, DetectDocumentTextCommand } from "@aws-sdk/client-textract"
+import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime"
+import sharp from "sharp"
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}))
 const s3 = new S3Client({})
-const textract = new TextractClient({})
+const bedrock = new BedrockRuntimeClient({})
 
 const TABLE = process.env.TICKET_TABLE
 const BUCKET = process.env.TICKET_BUCKET
+const MODEL_ID = process.env.NOVA_MODEL_ID
 
 const MIN_SIZE = 10_000
 const MAX_SIZE = 5_000_000
 
-// Textract merges the ticket's printed corner registration marks into the
-// adjacent word (e.g. "140378]"). Strip non-digits at the edges only — a
-// global strip would fuse a garbled "12 34AB" into a plausible-looking 1234.
+const TICKET_NUMBER = /^\d{4,8}$/
+
+// Ticket-number region as fractions of the full image; see fixtures/roi-crops/geometry.json
+const ROI = { left: 0.700, top: 0.005, width: 0.280, height: 0.070 }
+
+const PROMPT = `This image is a crop of the top-right corner of a paper delivery ticket.
+It contains a machine-printed serial number in red ink, 4-8 digits long.
+
+Respond with only those digits and nothing else.
+
+Respond with exactly NONE if any of these is true:
+- no red printed number is visible
+- any digit is cut off at the edge of the image
+- you are not certain of every digit`
+
+// Trim stray non-digits the model may wrap around its answer (quotes, punctuation).
+// Edges only — a global strip would fuse a garbled "12 34" into a plausible 1234.
 const normalizeDigits = (t) => t.replace(/^\D+|\D+$/g, "")
 
 const streamToBuffer = async (stream) => {
@@ -109,47 +125,45 @@ export const handler = async (event) => {
     return reject(`file size out of range (${size} bytes)`, imgBuffer)
   }
 
-  const inTicketNumberRegion = (b) => {
-    const box = b.Geometry?.BoundingBox
-    return box && box.Top <= 0.1 && box.Left >= 0.5
+  const { width, height } = await sharp(imgBuffer).metadata()
+  const roi = {
+    left: Math.round(width * ROI.left),
+    top: Math.round(height * ROI.top),
+    width: Math.round(width * ROI.width),
+    height: Math.round(height * ROI.height),
   }
+  const roiBuffer = await sharp(imgBuffer).extract(roi).toBuffer()
 
-  const textractRes = await textract.send(
-    new DetectDocumentTextCommand({
-      Document: { Bytes: imgBuffer },
+  const res = await bedrock.send(
+    new ConverseCommand({
+      modelId: MODEL_ID,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { image: { format: "jpeg", source: { bytes: roiBuffer } } },
+            { text: PROMPT },
+          ],
+        },
+      ],
+      inferenceConfig: { maxTokens: 20, temperature: 0 },
     })
   )
-  const ticketWordBlocks = textractRes.Blocks.filter(
-    (b) => b.BlockType === "WORD" && inTicketNumberRegion(b)
-  )
-  const candidates = ticketWordBlocks.map((b) => ({
-    text: b.Text,
-    digits: normalizeDigits(b.Text),
-    confidence: b.Confidence,
-    top: b.Geometry.BoundingBox.Top,
-    left: b.Geometry.BoundingBox.Left,
-  }))
+  const answer = res.output?.message?.content?.[0]?.text?.trim() ?? ""
   console.log(
-    "Ticket number candidates:",
-    JSON.stringify(
-      candidates.map((c) => ({
-        text: c.text,
-        digits: c.digits,
-        confidence: Math.round(c.confidence),
-        top: Number(c.top.toFixed(3)),
-        left: Number(c.left.toFixed(3)),
-      }))
-    )
+    "Ticket number extraction:",
+    JSON.stringify({ answer, roi, imageWidth: width, imageHeight: height, inputTokens: res.usage?.inputTokens })
   )
-  const ticketWords = candidates.map((c) => c.text)
-  const ticketNumber = candidates
-    .filter((c) => c.confidence >= 50 && /^\d{4,10}$/.test(c.digits))
-    .sort((a, b) => b.confidence - a.confidence)[0]?.digits
 
-  if (!ticketNumber) {
-    return reject("ticket number not detected", imgBuffer)
+  if (answer === "NONE") {
+    return reject("ticket number not readable", imgBuffer)
   }
-  console.log("Extracted ticket number:", ticketNumber, "from candidates:", JSON.stringify(ticketWords))
+
+  const ticketNumber = normalizeDigits(answer)
+  if (!TICKET_NUMBER.test(ticketNumber)) {
+    return reject(`ticket number not detected (model returned ${JSON.stringify(answer.slice(0, 20))})`, imgBuffer)
+  }
+  console.log("Extracted ticket number:", ticketNumber)
 
   const validatedKey = `validated/${ticketId}.jpg`
   await s3.send(
