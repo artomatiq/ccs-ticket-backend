@@ -1,0 +1,30 @@
+{
+  "description": "Ticket-number ROI, as fractions of the full ticket image. Applied as sharp.extract({ left: round(w*left), top: round(h*top), width: round(w*width), height: round(h*height) }). Assumes the frontend has already cropped the photo to the ticket edges.",
+  "roi": {
+    "left": 0.700,
+    "top": 0.005,
+    "width": 0.280,
+    "height": 0.070
+  },
+  "derivation": {
+    "method": "Measured the red-ink bounding box of the preprinted ticket number in each sample, then set the ROI to bound every observed extreme with margin. Red isolated as (G-R) thresholded at 18%.",
+    "samples": 69,
+    "source": "dt-tickets-prod items having both ticketNumber and rawKey, as of 2026-08-02",
+    "observed_digit_extent_within_this_roi": {
+      "left_min": 0.055,
+      "right_max": 0.978
+    },
+    "notes": [
+      "Margins are tuned to the extremes of 69 tickets, not a guaranteed bound.",
+      "5 of 69 crops register red at the right boundary; that is the dark photo border, not digits.",
+      "Supersedes the pre-0faaf29 ROI (left 0.55, width 1-left), which wasted ~40% of its width on blank stock left of the first digit."
+    ]
+  },
+  "previous_roi": {
+    "left": 0.55,
+    "top": 0.005,
+    "width": "width - left",
+    "height": 0.070,
+    "source_commit": "b82d6d3"
+  }
+}
