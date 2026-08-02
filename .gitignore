@@ -28,3 +28,6 @@ temp/
 
 # Local test data (real customer images, etc.)
 fixtures/
+
+#Workspace
+ccs_ticket:frontend.code-workspace

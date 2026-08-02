@@ -13,6 +13,11 @@ const BUCKET = process.env.TICKET_BUCKET
 const MIN_SIZE = 10_000
 const MAX_SIZE = 5_000_000
 
+// Textract merges the ticket's printed corner registration marks into the
+// adjacent word (e.g. "140378]"). Strip non-digits at the edges only — a
+// global strip would fuse a garbled "12 34AB" into a plausible-looking 1234.
+const normalizeDigits = (t) => t.replace(/^\D+|\D+$/g, "")
+
 const streamToBuffer = async (stream) => {
   const chunks = []
   for await (const chunk of stream) chunks.push(chunk)
@@ -117,21 +122,29 @@ export const handler = async (event) => {
   const ticketWordBlocks = textractRes.Blocks.filter(
     (b) => b.BlockType === "WORD" && inTicketNumberRegion(b)
   )
+  const candidates = ticketWordBlocks.map((b) => ({
+    text: b.Text,
+    digits: normalizeDigits(b.Text),
+    confidence: b.Confidence,
+    top: b.Geometry.BoundingBox.Top,
+    left: b.Geometry.BoundingBox.Left,
+  }))
   console.log(
     "Ticket number candidates:",
     JSON.stringify(
-      ticketWordBlocks.map((b) => ({
-        text: b.Text,
-        confidence: Math.round(b.Confidence),
-        top: Number(b.Geometry.BoundingBox.Top.toFixed(3)),
-        left: Number(b.Geometry.BoundingBox.Left.toFixed(3)),
+      candidates.map((c) => ({
+        text: c.text,
+        digits: c.digits,
+        confidence: Math.round(c.confidence),
+        top: Number(c.top.toFixed(3)),
+        left: Number(c.left.toFixed(3)),
       }))
     )
   )
-  const ticketWords = ticketWordBlocks.map((b) => b.Text)
-  const ticketNumber = ticketWordBlocks
-    .filter((b) => b.Confidence >= 50 && /^\d{4,10}$/.test(b.Text))
-    .sort((a, b) => b.Confidence - a.Confidence)[0]?.Text
+  const ticketWords = candidates.map((c) => c.text)
+  const ticketNumber = candidates
+    .filter((c) => c.confidence >= 50 && /^\d{4,10}$/.test(c.digits))
+    .sort((a, b) => b.confidence - a.confidence)[0]?.digits
 
   if (!ticketNumber) {
     return reject("ticket number not detected", imgBuffer)
